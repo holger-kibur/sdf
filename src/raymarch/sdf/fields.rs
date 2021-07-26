@@ -68,18 +68,16 @@ impl SdfNode {
             let (left_child_inds, right_child_inds) = self.calculate_bbox().split(
                 &self.slots.iter_mut().map(|(_, child)| child.calculate_bbox()).collect()
             );
-            let mut left_children: StableVec<SdfNode> = 
-                left_child_inds.iter().map(|child_ind| self.slots.remove(*child_ind)).collect();
-            let mut right_children: StableVec<SdfNode> = 
-                right_child_inds.iter().map(|child_ind| self.slots.remove(*child_ind)).collect();
-            if self.slots.num_elements() == 2 {
+            let left_children: StableVec<SdfNode> = left_child_inds.iter().map(|child_ind| self.slots.remove(*child_ind).unwrap()).collect();
+            let right_children: StableVec<SdfNode> = right_child_inds.iter().map(|child_ind| self.slots.remove(*child_ind).unwrap()).collect();
+            if self.slots.next_push_index() == 2 {
                 println!("leaf binary expansion");
-                assert!(left_children.len() == 1);
-                assert!(right_children.len() == 1);
+                assert!(left_children.num_elements() == 1);
+                assert!(right_children.num_elements() == 1);
                 SdfNode {
                     slots: vec![
-                        left_children.pop().unwrap().get_tree_expansion(),
-                        right_children.pop().unwrap().get_tree_expansion(),
+                        left_children.remove_first().unwrap().get_tree_expansion(),
+                        right_children.remove_first().unwrap().get_tree_expansion(),
                     ],
                     intern: Box::new(SdfBinaryUnion {}),
                     bbox: self.bbox
@@ -104,9 +102,9 @@ impl SdfNode {
                 }
             }
         } else {
-            println!("non-expandable interior node: {:?}, slots: {}", self.intern, self.slots.len());
+            println!("non-expandable interior node: {:?}, slots: {}", self.intern, self.slots.num_elements());
             SdfNode {
-                slots: self.slots.iter_mut().map(|child| child.get_tree_expansion()).collect(),
+                slots: self.slots.iter_mut().map(|(_, child)| child.get_tree_expansion()).collect(),
                 intern: self.intern.clone(),
                 bbox: self.bbox,
             }
@@ -115,7 +113,7 @@ impl SdfNode {
 
     pub fn internal_clone(&self) -> Self {
         SdfNode {
-            slots: Vec::with_capacity(self.intern.NUM_SLOTS()),
+            slots: StableVec::with_capacity(self.intern.NUM_SLOTS()),
             intern: self.intern.clone(),
             bbox: self.bbox,
         }
@@ -123,7 +121,7 @@ impl SdfNode {
 
     pub fn full_clone(&self) -> Self {
         SdfNode {
-            slots: self.slots.iter().map(|child| child.full_clone()).collect(),
+            slots: self.slots.iter().map(|(_, child)| child.full_clone()).collect(),
             intern: self.intern.clone(),
             bbox: self.bbox,
         }
@@ -134,10 +132,10 @@ impl SdfNode {
         disp_queue.push_back((0, self));
         while disp_queue.len() > 0 {
             let (level, front) = disp_queue.pop_front().unwrap();
-            for child in front.slots.iter() {
+            for (_, child) in front.slots.iter() {
                 disp_queue.push_back((level + 1, child));
             }
-            println!("{}: {:?}, slots: {}", level, front.intern, front.slots.len());
+            println!("{}: {:?}, slots: {}", level, front.intern, front.slots.num_elements());
         }
     }
 }

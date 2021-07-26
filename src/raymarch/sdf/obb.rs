@@ -34,12 +34,12 @@ impl Ord for CmpFloat {
 impl SdfBoundingBox {
     pub fn merge(sub_boxes: &[Self]) -> Self {
         // Build a matrix from all box vertices
-        let vert_mat = Matrix4xX::from_iterator(
+        let mut vert_mat = Matrix4xX::from_iterator(
             sub_boxes.len() * 8,
             sub_boxes.iter()
                 .map(|sub_box| VERT_LIST.iter()
-                    .map(|vert| (sub_box.matrix * vert).iter()
-                        .map(|x| *x))
+                    .map(move |vert| (sub_box.matrix * vert).iter()
+                        .map(|x| *x).collect::<Vec<f32>>())
                     .flatten())
                 .flatten()
         );
@@ -52,7 +52,7 @@ impl SdfBoundingBox {
             col -= vert_mean;
         }
         // Get covariance matrix by right-multiply with transpose
-        let covar_mat = (vert_mat * vert_mat_trans) / ((sub_boxes.len() * 8 - 1) as f32);
+        let covar_mat = (vert_mat * &vert_mat_trans) / ((sub_boxes.len() * 8 - 1) as f32);
         // Get eigenstuff of covariance matrix. Covariance is symmetric so we gucci.
         let eigen_info = covar_mat.symmetric_eigen();
         // Precalculate normalized eigenvector basis
@@ -81,7 +81,8 @@ impl SdfBoundingBox {
         }
     }
 
-    pub fn split(&self, sub_boxes: Vec<Self>) -> (Vec<Self>, Vec<Self>) {
+    pub fn split(&self, sub_boxes: &Vec<Self>) -> (Vec<usize>, Vec<usize>) {
+        let mut inds = (0..sub_boxes.len()).collect::<Vec<usize>>();
         // Get axes of sides of box
         let x_axis = self.matrix.column(0);
         let y_axis = self.matrix.column(1);
@@ -101,10 +102,10 @@ impl SdfBoundingBox {
             }
         };
         // Sort by value of projection along splitting axis
-        sub_boxes.sort_unstable_by_key(|sub_box| CmpFloat(sub_box.matrix.column(3).dot(&split_axis)));
+        inds.sort_unstable_by_key(|sub_box_ind| CmpFloat(sub_boxes[*sub_box_ind].matrix.column(3).dot(&split_axis)));
         // Split at median
-        let left_side = sub_boxes.split_off(sub_boxes.len() / 2);
-        (left_side, sub_boxes)
+        let left_side = inds.split_off(inds.len() / 2);
+        (left_side, inds)
     }
 
     pub fn from_srt(scale: Vec3, rotation: Vec3, translation: Vec3) -> Self {

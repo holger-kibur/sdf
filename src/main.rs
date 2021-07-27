@@ -13,31 +13,21 @@ fn main() {
         }
     )
     .operation(
-        SdfCaaClone {
-            displacement: Vec3::new(10.0, 5.0, 0.0),
-            bounds: Vec3::new(100.0, 100.0, 100.0),
-        }
-    )
-    .operation(
-        SdfSurfaceSin {
-            period: 1.0,
-            amplitude: 0.5,
-        }
-    )
-    .operation(
         SdfUnion {
             smooth_radius: 0.0,
         }
-    )
-    .with(
-        SdfBuilder::primitive(
-            SdfSphere {
-                radius: 20.0
-            }
+    );
+    for _ in 0..16 {
+        sdf = sdf.with(
+            SdfBuilder::primitive(
+                SdfSphere {
+                    radius: 20.0
+                }
+            )
         )
-    )
-    .finalize();
-    sdf.bf_display();
+    }
+    let sdf_comp = sdf.finalize();
+    sdf_comp.bf_display();
     println!();
-    sdf.get_tree_expansion().bf_display();
+    sdf_comp.get_tree_expansion().bf_display();
 }

@@ -16,7 +16,7 @@ macro_rules! dyn_assoc_const {
 }
 
 pub struct SdfNode {
-    slots: StableVec<SdfNode>,
+    pub slots: StableVec<SdfNode>,
     intern: Box<dyn SdfElement>,
     bbox: Option<SdfBoundingBox>,
 }
@@ -41,8 +41,12 @@ impl SdfNode {
         }
     }
 
-    pub fn invalidate_bbox(&mut self) {
-        self.bbox = None;
+    pub fn get_bbox(&mut self) -> SdfBoundingBox {
+        if let Some(bbox) = self.bbox {
+            bbox
+        } else {
+            self.calculate_bbox()
+        }
     }
 
     pub fn calculate_bbox(&mut self) -> SdfBoundingBox {
@@ -56,47 +60,56 @@ impl SdfNode {
         bbox
     }
 
-    pub fn tree_expand(&self) -> SdfNode {
-        let mut new_tree = self.full_clone();
-        new_tree.get_tree_expansion();
-        new_tree
+    pub fn get_tree_expansion(&self) -> SdfNode {
+        self.full_clone().tree_expand()
     }
 
-    fn get_tree_expansion(&mut self) -> SdfNode {
+    fn tree_expand(&mut self) -> SdfNode {
         println!("Start tree expansion {:?}, {}", self.intern, self.slots.num_elements());
         if self.intern.TREE_EXPAND() && self.slots.num_elements() >= 2 {
             let (left_child_inds, right_child_inds) = self.calculate_bbox().split(
-                &self.slots.iter_mut().map(|(_, child)| child.calculate_bbox()).collect()
+                &self.slots.iter_mut()
+                    .map(|(_, child)| child.calculate_bbox())
+                    .collect::<Vec<SdfBoundingBox>>()
+                    .as_slice()
             );
-            let left_children: StableVec<SdfNode> = left_child_inds.iter().map(|child_ind| self.slots.remove(*child_ind).unwrap()).collect();
-            let right_children: StableVec<SdfNode> = right_child_inds.iter().map(|child_ind| self.slots.remove(*child_ind).unwrap()).collect();
+            let mut left_children: StableVec<SdfNode> = left_child_inds.iter().map(|child_ind| self.slots.remove(*child_ind).unwrap()).collect();
+            let mut right_children: StableVec<SdfNode> = right_child_inds.iter().map(|child_ind| self.slots.remove(*child_ind).unwrap()).collect();
             if self.slots.next_push_index() == 2 {
                 println!("leaf binary expansion");
                 assert!(left_children.num_elements() == 1);
                 assert!(right_children.num_elements() == 1);
                 SdfNode {
-                    slots: vec![
-                        left_children.remove_first().unwrap().get_tree_expansion(),
-                        right_children.remove_first().unwrap().get_tree_expansion(),
-                    ],
+                    slots: {
+                        let mut div_slots: StableVec<SdfNode> = StableVec::with_capacity(2);
+                        div_slots.push(left_children.remove_first().unwrap().get_tree_expansion());
+                        div_slots.push(right_children.remove_first().unwrap().get_tree_expansion());
+                        div_slots
+                    },
                     intern: Box::new(SdfBinaryUnion {}),
                     bbox: self.bbox
                 }
             } else {
                 println!("non-binary expansion");
                 SdfNode {
-                    slots: vec![
-                        SdfNode {
-                            slots: left_children,
-                            intern: self.intern.clone(),
-                            bbox: None
-                        }.get_tree_expansion(),
-                        SdfNode {
-                            slots: right_children,
-                            intern: self.intern.clone(),
-                            bbox: None
-                        }.get_tree_expansion()
-                    ],
+                    slots: {
+                        let mut div_slots: StableVec<SdfNode> = StableVec::with_capacity(2);
+                        div_slots.push(
+                            SdfNode {
+                                slots: left_children,
+                                intern: self.intern.clone(),
+                                bbox: None
+                            }.get_tree_expansion()
+                        );
+                        div_slots.push(
+                            SdfNode {
+                                slots: right_children,
+                                intern: self.intern.clone(),
+                                bbox: None
+                            }.get_tree_expansion()
+                        );
+                        div_slots
+                    },
                     intern: Box::new(SdfBinaryUnion {}),
                     bbox: self.bbox
                 }
@@ -111,14 +124,6 @@ impl SdfNode {
         }
     }
 
-    pub fn internal_clone(&self) -> Self {
-        SdfNode {
-            slots: StableVec::with_capacity(self.intern.NUM_SLOTS()),
-            intern: self.intern.clone(),
-            bbox: self.bbox,
-        }
-    }
-
     pub fn full_clone(&self) -> Self {
         SdfNode {
             slots: self.slots.iter().map(|(_, child)| child.full_clone()).collect(),
@@ -130,7 +135,7 @@ impl SdfNode {
     pub fn bf_display(&self) {
         let mut disp_queue: VecDeque<(usize, &SdfNode)> = VecDeque::new();
         disp_queue.push_back((0, self));
-        while disp_queue.len() > 0 {
+        while !disp_queue.is_empty() {
             let (level, front) = disp_queue.pop_front().unwrap();
             for (_, child) in front.slots.iter() {
                 disp_queue.push_back((level + 1, child));
@@ -140,6 +145,7 @@ impl SdfNode {
     }
 }
 
+#[allow(non_snake_case)] // Dynamic constants should act as constants, so name them accordingly
 pub trait SdfElement: fmt::Debug {
     // Dynamic constants
     fn NUM_SLOTS(&self) -> usize;
@@ -181,9 +187,12 @@ impl SdfBuilder {
 
     pub fn with(mut self, node: SdfBuilder) -> Self {
         self.root.set_slot(node.root).expect("Couldn't set operation slot");
-        SdfBuilder {
-            root: self.root
-        }
+        self
+    }
+
+    pub fn transform(mut self, trans: Transform) -> Self {
+        self.root.bbox = Some(self.root.get_bbox().apply_bevy_transform(trans));
+        self
     }
 
     pub fn finalize(self) -> SdfNode {
@@ -204,7 +213,7 @@ impl SdfElement for SdfSphere {
     dyn_assoc_const!(OP_ID: u32 = 0);
     dyn_assoc_const!(TREE_EXPAND: bool = false);
 
-    fn get_bbox_from_slots(&self, slots_bboxes: &[SdfBoundingBox]) -> SdfBoundingBox {
+    fn get_bbox_from_slots(&self, _slots_bboxes: &[SdfBoundingBox]) -> SdfBoundingBox {
         SdfBoundingBox::from_srt(
             Vec3::splat(self.radius),
             Vec3::ZERO,
@@ -279,7 +288,7 @@ impl SdfElement for SdfCaaClone {
     dyn_assoc_const!(OP_ID: u32 = 3);
     dyn_assoc_const!(TREE_EXPAND: bool = false);
 
-    fn get_bbox_from_slots(&self, slots_bboxes: &[SdfBoundingBox]) -> SdfBoundingBox {
+    fn get_bbox_from_slots(&self, _slots_bboxes: &[SdfBoundingBox]) -> SdfBoundingBox {
         SdfBoundingBox::from_srt(
             self.bounds,
             Vec3::ZERO,

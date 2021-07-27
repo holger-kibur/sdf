@@ -20,10 +20,16 @@ pub struct SdfBoundingBox {
 
 // I'm so done with this floats-can't-be-compared bullshit; I don't care 
 // if it isn't right. 
-#[derive(PartialEq, PartialOrd)]
+#[derive(PartialEq)]
 struct CmpFloat(f32);
 
 impl Eq for CmpFloat {}
+
+impl PartialOrd for CmpFloat {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.0.partial_cmp(&other.0)
+    }
+}
 
 impl Ord for CmpFloat {
     fn cmp(&self, other: &Self) -> Ordering {
@@ -32,6 +38,7 @@ impl Ord for CmpFloat {
 }
 
 impl SdfBoundingBox {
+    #[allow(clippy::map_clone)]
     pub fn merge(sub_boxes: &[Self]) -> Self {
         // Build a matrix from all box vertices
         let mut vert_mat = Matrix4xX::from_iterator(
@@ -81,7 +88,7 @@ impl SdfBoundingBox {
         }
     }
 
-    pub fn split(&self, sub_boxes: &Vec<Self>) -> (Vec<usize>, Vec<usize>) {
+    pub fn split(&self, sub_boxes: &[Self]) -> (Vec<usize>, Vec<usize>) {
         let mut inds = (0..sub_boxes.len()).collect::<Vec<usize>>();
         // Get axes of sides of box
         let x_axis = self.matrix.column(0);
@@ -134,6 +141,14 @@ impl SdfBoundingBox {
                 scale.z
             ))
             * self.matrix
+        }
+    }
+
+    pub fn apply_bevy_transform(self, trans: Transform) -> Self {
+        SdfBoundingBox {
+            matrix: Matrix4::from_column_slice(
+                &trans.compute_matrix().to_cols_array()
+            ) * self.matrix
         }
     }
 }

@@ -13,11 +13,6 @@ const VERT_LIST: [Vector4<f32>; 8] = [
     Vector4::new(-1.0, -1.0, -1.0, 1.0),
 ];
 
-#[derive(Copy, Clone)]
-pub struct SdfBoundingBox {
-    matrix: Matrix4<f32>,
-}
-
 // I'm so done with this floats-can't-be-compared bullshit; I don't care 
 // if it isn't right. 
 #[derive(PartialEq)]
@@ -37,7 +32,27 @@ impl Ord for CmpFloat {
     }
 }
 
+#[derive(Copy, Clone)]
+pub struct SdfBoundingBox {
+    matrix: Matrix4<f32>,
+    inverse: Option<Matrix4<f32>>,
+}
+
 impl SdfBoundingBox {
+    pub fn unit() -> Self {
+        SdfBoundingBox {
+            matrix: Matrix4::identity(),
+            inverse: Some(Matrix4::identity()),
+        }
+    }
+
+    pub fn zero() -> Self {
+        SdfBoundingBox {
+            matrix: Matrix4::zeros(),
+            inverse: None,
+        }
+    }
+
     #[allow(clippy::map_clone)]
     pub fn merge(sub_boxes: &[Self]) -> Self {
         // Build a matrix from all box vertices
@@ -84,7 +99,8 @@ impl SdfBoundingBox {
             .append_translation(&vert_mean.xyz())
             .append_nonuniform_scaling(&scale.xyz());
         SdfBoundingBox {
-            matrix: new_bbox_mat
+            matrix: new_bbox_mat,
+            inverse: new_bbox_mat.try_inverse(),
         }
     }
 
@@ -115,40 +131,21 @@ impl SdfBoundingBox {
         (left_side, inds)
     }
 
-    pub fn from_srt(scale: Vec3, rotation: Vec3, translation: Vec3) -> Self {
-        // SRT is Scaling, Rotation, Tramslation e.g. the order in which operations are performed
-        // Note that because we work with column vectors, the order is reversed in multiplication.
+    pub fn from_transform(trans: Transform) -> Self {
+        Self::unit().apply_transform(trans)
+    }
+
+    pub fn apply_transform(self, trans: Transform) -> Self {
+        let mat = Matrix4::from_column_slice(
+            &trans.compute_matrix().to_cols_array()
+        ) * self.matrix;
         SdfBoundingBox {
-            matrix: Matrix4::new_translation(&Vector3::new(
-                translation.x,
-                translation.y,
-                translation.z,
-            ))
-            * Matrix4::from_euler_angles(rotation.x, rotation.y, rotation.z)
-            * Matrix4::new_nonuniform_scaling(&Vector3::new(
-                scale.x,
-                scale.y,
-                scale.z
-            ))
+            matrix: mat,
+            inverse: mat.try_inverse()
         }
     }
 
-    pub fn apply_scale(&self, scale: Vec3) -> Self {
-        SdfBoundingBox {
-            matrix: Matrix4::new_nonuniform_scaling(&Vector3::new(
-                scale.x,
-                scale.y,
-                scale.z
-            ))
-            * self.matrix
-        }
-    }
-
-    pub fn apply_bevy_transform(self, trans: Transform) -> Self {
-        SdfBoundingBox {
-            matrix: Matrix4::from_column_slice(
-                &trans.compute_matrix().to_cols_array()
-            ) * self.matrix
-        }
+    pub fn get_info(&self) {
+        println!("Matrix: {}", self.matrix);
     }
 }

@@ -7,14 +7,6 @@ use bevy::{
 };
 use super::obb::*;
 
-macro_rules! dyn_assoc_const {
-    ($name:ident: $type:ty = $($value:tt)+) => {
-        fn $name(&self) -> $type {
-            $($value)+
-        }
-    };
-}
-
 pub struct SdfNode {
     pub slots: StableVec<SdfNode>,
     intern: Box<dyn SdfElement>,
@@ -24,16 +16,17 @@ pub struct SdfNode {
 impl SdfNode {
     pub fn new<T: SdfElement + 'static>(intern: T) -> Self {
         SdfNode {
-            slots: StableVec::with_capacity(usize::min(intern.NUM_SLOTS(), 128)),
+            slots: StableVec::with_capacity(usize::min(intern.get_info().num_slots, 128)),
             intern: Box::new(intern),
             bbox: None,
         }
     }
 
     pub fn set_slot(&mut self, child_node: SdfNode) -> Result<(), &'static str> {
-        if self.intern.IS_PRIMITIVE() {
+        let intern_info = self.intern.get_info();
+        if intern_info.is_primitive {
             Err("Can't set slots on primitive!")
-        } else if self.slots.num_elements() >= self.intern.NUM_SLOTS() {
+        } else if self.slots.num_elements() >= intern_info.num_slots {
             Err("Slots already full!")
         } else {
             self.slots.push(child_node);
@@ -41,18 +34,14 @@ impl SdfNode {
         }
     }
 
-    pub fn get_bbox(&mut self) -> SdfBoundingBox {
-        if let Some(bbox) = self.bbox {
-            bbox
-        } else {
-            self.calculate_bbox()
-        }
-    }
-
-    pub fn calculate_bbox(&mut self) -> SdfBoundingBox {
+    pub fn calc_bbox_assign(&mut self) -> SdfBoundingBox {
+        assert!(
+            self.intern.get_info().required_range.all(|ind| self.slots.has_element_at(ind)),
+            "Tried calculating bounding box of SDF node without all required slots filled!"    
+        );
         let bbox = self.intern.get_bbox_from_slots(
             self.slots.iter_mut()
-                .map(|(_, node)| node.calculate_bbox())
+                .map(|(_, node)| node.calc_bbox_assign())
                 .collect::<Vec<SdfBoundingBox>>()
                 .as_slice()
         );
@@ -60,30 +49,34 @@ impl SdfNode {
         bbox
     }
 
+    pub fn is_finished(&self) -> bool {
+        self.bbox.is_some()
+    }
+
     pub fn get_tree_expansion(&self) -> SdfNode {
         self.full_clone().tree_expand()
     }
 
     fn tree_expand(&mut self) -> SdfNode {
+        assert!(self.is_finished(), "Tried expanding an unfinished SDF node!");
         println!("Start tree expansion {:?}, {}", self.intern, self.slots.num_elements());
-        if self.intern.TREE_EXPAND() && self.slots.num_elements() >= 2 {
-            let (left_child_inds, right_child_inds) = self.calculate_bbox().split(
-                &self.slots.iter_mut()
-                    .map(|(_, child)| child.calculate_bbox())
+        let intern_info = self.intern.get_info();
+        if intern_info.tree_expand && self.slots.num_elements() >= 2 {
+            let (left_child_inds, right_child_inds) = self.bbox.unwrap().split(
+                (intern_info.child_range.start..intern_info.child_range.end.min(self.slots.num_elements()))
+                    .map(|i| self.slots.get(i).unwrap().bbox.unwrap())
                     .collect::<Vec<SdfBoundingBox>>()
                     .as_slice()
             );
             let mut left_children: StableVec<SdfNode> = left_child_inds.iter().map(|child_ind| self.slots.remove(*child_ind).unwrap()).collect();
             let mut right_children: StableVec<SdfNode> = right_child_inds.iter().map(|child_ind| self.slots.remove(*child_ind).unwrap()).collect();
-            if self.slots.next_push_index() == 2 {
+            if left_children.num_elements() == 1 && right_children.num_elements() == 1 {
                 println!("leaf binary expansion");
-                assert!(left_children.num_elements() == 1);
-                assert!(right_children.num_elements() == 1);
                 SdfNode {
                     slots: {
                         let mut div_slots: StableVec<SdfNode> = StableVec::with_capacity(2);
-                        div_slots.push(left_children.remove_first().unwrap().get_tree_expansion());
-                        div_slots.push(right_children.remove_first().unwrap().get_tree_expansion());
+                        div_slots.push(left_children.remove_first().unwrap().tree_expand());
+                        div_slots.push(right_children.remove_first().unwrap().tree_expand());
                         div_slots
                     },
                     intern: Box::new(SdfBinaryUnion {}),
@@ -99,14 +92,14 @@ impl SdfNode {
                                 slots: left_children,
                                 intern: self.intern.clone(),
                                 bbox: None
-                            }.get_tree_expansion()
+                            }.tree_expand()
                         );
                         div_slots.push(
                             SdfNode {
                                 slots: right_children,
                                 intern: self.intern.clone(),
                                 bbox: None
-                            }.get_tree_expansion()
+                            }.tree_expand()
                         );
                         div_slots
                     },
@@ -117,7 +110,7 @@ impl SdfNode {
         } else {
             println!("non-expandable interior node: {:?}, slots: {}", self.intern, self.slots.num_elements());
             SdfNode {
-                slots: self.slots.iter_mut().map(|(_, child)| child.get_tree_expansion()).collect(),
+                slots: self.slots.iter_mut().map(|(_, child)| child.tree_expand()).collect(),
                 intern: self.intern.clone(),
                 bbox: self.bbox,
             }
@@ -141,21 +134,47 @@ impl SdfNode {
                 disp_queue.push_back((level + 1, child));
             }
             println!("{}: {:?}, slots: {}", level, front.intern, front.slots.num_elements());
+            front.bbox.unwrap_or(SdfBoundingBox::zero()).get_info()
+        }
+    }
+}
+
+pub struct SdfElementInfo {
+    pub num_slots: usize,
+    pub is_primitive: bool,
+    pub op_id: u32,
+    pub tree_expand: bool,
+    pub child_range: Range<usize>,
+    pub required_range: Range<usize>,
+}
+
+impl SdfElementInfo {
+    pub fn primitive_info(op_id: u32) -> Self {
+        SdfElementInfo {
+            num_slots: 0,
+            is_primitive: true,
+            op_id,
+            tree_expand: false,
+            child_range: 0..0,
+            required_range: 0..0,
+        }
+    }
+
+    pub fn strict_info(op_id: u32, num_slots: usize) -> Self {
+        SdfElementInfo {
+            num_slots,
+            is_primitive: false,
+            op_id,
+            tree_expand: false,
+            child_range: 0..num_slots,
+            required_range: 0..num_slots,
         }
     }
 }
 
 #[allow(non_snake_case)] // Dynamic constants should act as constants, so name them accordingly
 pub trait SdfElement: fmt::Debug {
-    // Dynamic constants
-    fn NUM_SLOTS(&self) -> usize;
-    fn IS_PRIMITIVE(&self) -> bool;
-    fn OP_ID(&self) -> u32;
-    fn CHILD_SLOT_RANGE(&self) -> Range<usize> {
-        0..0 // Empty range for primitives, since they don't have slots
-    }
-    fn TREE_EXPAND(&self) -> bool;
-
+    fn get_info(&self) -> SdfElementInfo;
     // Actual logic
     fn get_bbox_from_slots(&self, slots_bboxes: &[SdfBoundingBox]) -> SdfBoundingBox;
     // Doesn't have to be implemented for primitives, since they are leaf nodes
@@ -171,7 +190,7 @@ pub struct SdfBuilder {
 
 impl SdfBuilder {
     pub fn primitive<T: SdfElement + 'static>(prim: T) -> Self {
-        assert!(prim.IS_PRIMITIVE());
+        assert!(prim.get_info().is_primitive);
         SdfBuilder {
             root: SdfNode::new(prim)
         }
@@ -191,11 +210,12 @@ impl SdfBuilder {
     }
 
     pub fn transform(mut self, trans: Transform) -> Self {
-        self.root.bbox = Some(self.root.get_bbox().apply_bevy_transform(trans));
+        self.root.bbox = Some(self.root.calc_bbox_assign().apply_transform(trans));
         self
     }
 
-    pub fn finalize(self) -> SdfNode {
+    pub fn finalize(mut self) -> SdfNode {
+        self.root.calc_bbox_assign();
         self.root
     }
 }
@@ -208,17 +228,12 @@ pub struct SdfSphere {
 }
 
 impl SdfElement for SdfSphere {
-    dyn_assoc_const!(NUM_SLOTS: usize = 0);
-    dyn_assoc_const!(IS_PRIMITIVE: bool = true);
-    dyn_assoc_const!(OP_ID: u32 = 0);
-    dyn_assoc_const!(TREE_EXPAND: bool = false);
+    fn get_info(&self) -> SdfElementInfo {
+        SdfElementInfo::primitive_info(0)
+    }
 
     fn get_bbox_from_slots(&self, _slots_bboxes: &[SdfBoundingBox]) -> SdfBoundingBox {
-        SdfBoundingBox::from_srt(
-            Vec3::splat(self.radius),
-            Vec3::ZERO,
-            Vec3::ZERO,
-        )
+        SdfBoundingBox::from_transform(Transform::from_scale(Vec3::splat(self.radius)))
     }
     
     fn clone(&self) -> Box<dyn SdfElement> {
@@ -237,11 +252,16 @@ pub struct SdfUnion {
 }
 
 impl SdfElement for SdfUnion {
-    dyn_assoc_const!(NUM_SLOTS: usize = usize::MAX);
-    dyn_assoc_const!(IS_PRIMITIVE: bool = false);
-    dyn_assoc_const!(CHILD_SLOT_RANGE: Range<usize> = 0..usize::MAX);
-    dyn_assoc_const!(OP_ID: u32 = 1);
-    dyn_assoc_const!(TREE_EXPAND: bool = true);
+    fn get_info(&self) -> SdfElementInfo {
+        SdfElementInfo {
+            num_slots: usize::MAX,
+            is_primitive: false,
+            op_id: 1,
+            tree_expand: true,
+            child_range: 0..usize::MAX,
+            required_range: 0..2,
+        }
+    }
 
     fn get_bbox_from_slots(&self, slots_bboxes: &[SdfBoundingBox]) -> SdfBoundingBox {
         SdfBoundingBox::merge(slots_bboxes)
@@ -259,11 +279,9 @@ impl SdfElement for SdfUnion {
 pub struct SdfBinaryUnion {}
 
 impl SdfElement for SdfBinaryUnion {
-    dyn_assoc_const!(NUM_SLOTS: usize = 2);
-    dyn_assoc_const!(IS_PRIMITIVE: bool = false);
-    dyn_assoc_const!(CHILD_SLOT_RANGE: Range<usize> = 0..2);
-    dyn_assoc_const!(OP_ID: u32 = 2);
-    dyn_assoc_const!(TREE_EXPAND: bool = false);
+    fn get_info(&self) -> SdfElementInfo {
+        SdfElementInfo::strict_info(2, 2)
+    }
 
     fn get_bbox_from_slots(&self, slots_bboxes: &[SdfBoundingBox]) -> SdfBoundingBox {
         SdfBoundingBox::merge(slots_bboxes)
@@ -282,18 +300,12 @@ pub struct SdfCaaClone {
 }
 
 impl SdfElement for SdfCaaClone {
-    dyn_assoc_const!(NUM_SLOTS: usize = 1);
-    dyn_assoc_const!(IS_PRIMITIVE: bool = false);
-    dyn_assoc_const!(CHILD_SLOT_RANGE: Range<usize> = 0..1);
-    dyn_assoc_const!(OP_ID: u32 = 3);
-    dyn_assoc_const!(TREE_EXPAND: bool = false);
+    fn get_info(&self) -> SdfElementInfo {
+        SdfElementInfo::strict_info(3, 1)
+    }
 
     fn get_bbox_from_slots(&self, _slots_bboxes: &[SdfBoundingBox]) -> SdfBoundingBox {
-        SdfBoundingBox::from_srt(
-            self.bounds,
-            Vec3::ZERO,
-            Vec3::ZERO,
-        )
+        SdfBoundingBox::from_transform(Transform::from_scale(self.bounds))
     }
 
     fn downtree_transform(&self, point: Vec3) -> Vec3 {
@@ -320,14 +332,12 @@ pub struct SdfSurfaceSin {
 }
 
 impl SdfElement for SdfSurfaceSin {
-    dyn_assoc_const!(NUM_SLOTS: usize = 1);
-    dyn_assoc_const!(IS_PRIMITIVE: bool = false);
-    dyn_assoc_const!(CHILD_SLOT_RANGE: Range<usize> = 0..1);
-    dyn_assoc_const!(OP_ID: u32 = 4);
-    dyn_assoc_const!(TREE_EXPAND: bool = false);
+    fn get_info(&self) -> SdfElementInfo {
+        SdfElementInfo::strict_info(4, 1)
+    }
 
     fn get_bbox_from_slots(&self, slots_bboxes: &[SdfBoundingBox]) -> SdfBoundingBox {
-        slots_bboxes[0].apply_scale(Vec3::splat(self.amplitude))
+        slots_bboxes[0].apply_transform(Transform::from_scale(Vec3::splat(self.amplitude)))
     }
 
     fn downtree_transform(&self, point: Vec3) -> Vec3 {

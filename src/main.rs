@@ -13,10 +13,22 @@ fn main() {
             radius: 5.0,
         }
     )
+    .transform(Transform::from_xyz(
+        1.0,
+        2.0,
+        3.0,
+    ))
     .operation(
         SdfUnion {
             smooth_radius: 0.0,
         }
+    )
+    .with(
+        SdfBuilder::primitive(
+            SdfSphere {
+                radius: 1.0,
+            }
+        )
     );
     let sdf_comp = sdf.finalize();
     sdf_comp.bf_display();

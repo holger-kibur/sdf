@@ -65,7 +65,7 @@ impl SdfBoundingBox {
                     .flatten())
                 .flatten()
         );
-        // Precalculate transpose
+        // Get trans before mean
         let vert_mat_trans = vert_mat.transpose();
         // Get mean of vertices
         let vert_mean = vert_mat.column_mean();
@@ -73,14 +73,14 @@ impl SdfBoundingBox {
         for mut col in vert_mat.column_iter_mut() {
             col -= vert_mean;
         }
+        // Get transpose
+        let vert_mat_mean_trans = vert_mat.transpose();
         // Get covariance matrix by right-multiply with transpose
-        let covar_mat = (vert_mat * &vert_mat_trans) / ((sub_boxes.len() * 8 - 1) as f32);
+        let covar_mat = (vert_mat * &vert_mat_mean_trans) / ((sub_boxes.len() * 8 - 1) as f32);
         // Get eigenstuff of covariance matrix. Covariance is symmetric so we gucci.
         let eigen_info = covar_mat.symmetric_eigen();
-        // Precalculate normalized eigenvector basis
-        let eigenbasis_norm = eigen_info.eigenvectors.normalize();
         // Get projections of box verts on normalized eigenvector basis
-        let vert_proj_mat = vert_mat_trans * eigenbasis_norm;
+        let vert_proj_mat = vert_mat_trans * eigen_info.eigenvectors;
         // Get minimums and maximums of verts along eigenvector basis
         let mut box_min = Vector4::zeros();
         let mut box_max = Vector4::zeros();
@@ -95,7 +95,7 @@ impl SdfBoundingBox {
         // Get scale of new bounding box using centroid
         let scale = box_max - centroid;
         // Create new bounding box matrix in eigenbasis of vertices, then change to standard basis
-        let new_bbox_mat = (Matrix4::new_translation(&centroid.xyz()) * eigenbasis_norm)
+        let new_bbox_mat = (Matrix4::new_translation(&centroid.xyz()) * eigen_info.eigenvectors)
             .append_translation(&vert_mean.xyz())
             .append_nonuniform_scaling(&scale.xyz());
         SdfBoundingBox {

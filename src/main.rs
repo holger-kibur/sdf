@@ -14,9 +14,9 @@ fn main() {
         }
     )
     .transform(Transform::from_xyz(
-        1.0,
         2.0,
-        3.0,
+        2.0,
+        0.0,
     ))
     .operation(
         SdfUnion {

@@ -1,4 +1,4 @@
-use nalgebra::{Matrix4, Vector4, Vector3, Matrix4xX};
+use nalgebra::{Matrix4, Vector4, matrix, Matrix4xX};
 use std::cmp::{Ordering};
 use bevy::prelude::*;
 
@@ -65,8 +65,6 @@ impl SdfBoundingBox {
                     .flatten())
                 .flatten()
         );
-        // Get trans before mean
-        let vert_mat_trans = vert_mat.transpose();
         // Get mean of vertices
         let vert_mean = vert_mat.column_mean();
         // Subtract mean from vert columns
@@ -79,8 +77,11 @@ impl SdfBoundingBox {
         let covar_mat = (vert_mat * &vert_mat_mean_trans) / ((sub_boxes.len() * 8 - 1) as f32);
         // Get eigenstuff of covariance matrix. Covariance is symmetric so we gucci.
         let eigen_info = covar_mat.symmetric_eigen();
+        // For some reason, symmetric eigen loves to make the W-vector negative sometimes, so we have to set it 
+        let mut eigen_basis = eigen_info.eigenvectors;
+        eigen_basis.set_column(3, &matrix![0.0; 0.0; 0.0; 1.0;]);
         // Get projections of box verts on normalized eigenvector basis
-        let vert_proj_mat = vert_mat_trans * eigen_info.eigenvectors;
+        let vert_proj_mat = vert_mat_mean_trans * eigen_basis;
         // Get minimums and maximums of verts along eigenvector basis
         let mut box_min = Vector4::zeros();
         let mut box_max = Vector4::zeros();
@@ -95,9 +96,9 @@ impl SdfBoundingBox {
         // Get scale of new bounding box using centroid
         let scale = box_max - centroid;
         // Create new bounding box matrix in eigenbasis of vertices, then change to standard basis
-        let new_bbox_mat = (Matrix4::new_translation(&centroid.xyz()) * eigen_info.eigenvectors)
-            .append_translation(&vert_mean.xyz())
-            .append_nonuniform_scaling(&scale.xyz());
+        let new_bbox_mat = Matrix4::new_translation(&vert_mean.xyz())
+            * eigen_basis
+            * Matrix4::new_nonuniform_scaling(&scale.xyz()).append_translation(&centroid.xyz());
         SdfBoundingBox {
             matrix: new_bbox_mat,
             inverse: new_bbox_mat.try_inverse(),

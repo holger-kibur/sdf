@@ -53,6 +53,11 @@ impl SdfNode {
         }
     }
 
+    fn box_and_expand(mut self) -> SdfNode {
+        self.calc_bbox_assign();
+        self.tree_expand()
+    }
+
     pub fn is_finished(&self) -> bool {
         self.bbox.is_some()
     }
@@ -94,14 +99,14 @@ impl SdfNode {
                                     slots: left_children,
                                     intern: self.intern.clone(),
                                     bbox: None
-                                }.tree_expand()
+                                }.box_and_expand()
                             );
                             div_slots.push(
                                 SdfNode {
                                     slots: right_children,
                                     intern: self.intern.clone(),
                                     bbox: None
-                                }.tree_expand()
+                                }.box_and_expand()
                             );
                             div_slots
                         },
@@ -183,18 +188,6 @@ impl SdfElementInfo {
     }
 }
 
-#[allow(non_snake_case)] // Dynamic constants should act as constants, so name them accordingly
-pub trait SdfElement: fmt::Debug {
-    fn get_info(&self) -> SdfElementInfo;
-    // Actual logic
-    fn get_bbox_from_slots(&self, slots_bboxes: &[SdfBoundingBox]) -> SdfBoundingBox;
-    // Doesn't have to be implemented for primitives, since they are leaf nodes
-    fn downtree_transform(&self, point: Vec3) -> Vec3 {
-        point
-    }
-    fn clone(&self) -> Box<dyn SdfElement>;
-}
-
 pub struct SdfBuilder {
     root: SdfNode,
 }
@@ -231,6 +224,17 @@ impl SdfBuilder {
     }
 }
 
+pub trait SdfElement: fmt::Debug {
+    fn get_info(&self) -> SdfElementInfo;
+    // Actual logic
+    fn get_bbox_from_slots(&self, slots_bboxes: &[SdfBoundingBox]) -> SdfBoundingBox;
+    // Doesn't have to be implemented for primitives, since they are leaf nodes
+    fn downtree_transform(&self, point: Vec3) -> Vec3 {
+        point
+    }
+    fn clone(&self) -> Box<dyn SdfElement>;
+}
+
 // Primitives
 
 #[derive(Debug)]
@@ -250,6 +254,29 @@ impl SdfElement for SdfSphere {
     fn clone(&self) -> Box<dyn SdfElement> {
         Box::new(SdfSphere {
             radius: self.radius
+        })
+    }
+}
+
+#[derive(Debug)]
+struct SdfBoxFrame {
+    pub dimension: Vec3,
+    pub thickness: f32,
+}
+
+impl SdfElement for SdfBoxFrame {
+    fn get_info(&self) -> SdfElementInfo {
+        SdfElementInfo::primitive_info(5)
+    }
+
+    fn get_bbox_from_slots(&self, _slots_bboxes: &[SdfBoundingBox]) -> SdfBoundingBox {
+        SdfBoundingBox::from_transform(Transform::from_scale(self.dimension))
+    }
+
+    fn clone(&self) -> Box<dyn SdfElement> {
+        Box::new(SdfBoxFrame {
+            dimension: self.dimension,
+            thickness: self.thickness,
         })
     }
 }

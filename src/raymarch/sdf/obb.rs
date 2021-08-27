@@ -35,21 +35,26 @@ impl Ord for CmpFloat {
 #[derive(Copy, Clone)]
 pub struct SdfBoundingBox {
     matrix: Matrix4<f32>,
-    inverse: Option<Matrix4<f32>>,
+    inverse: Matrix4<f32>,
 }
 
 impl SdfBoundingBox {
     pub fn unit() -> Self {
         SdfBoundingBox {
             matrix: Matrix4::identity(),
-            inverse: Some(Matrix4::identity()),
+            inverse: Matrix4::identity(),
         }
     }
 
     pub fn zero() -> Self {
         SdfBoundingBox {
             matrix: Matrix4::zeros(),
-            inverse: None,
+            inverse: matrix![
+                f32::INFINITY, 0.0, 0.0, 0.0;
+                0.0, f32::INFINITY, 0.0, 0.0;
+                0.0, 0.0, f32::INFINITY, 0.0;
+                0.0, 0.0, 0.0,           1.0;
+            ],
         }
     }
 
@@ -101,7 +106,7 @@ impl SdfBoundingBox {
             * Matrix4::new_nonuniform_scaling(&scale.xyz()).append_translation(&centroid.xyz());
         SdfBoundingBox {
             matrix: new_bbox_mat,
-            inverse: new_bbox_mat.try_inverse(),
+            inverse: new_bbox_mat.try_inverse().unwrap(),
         }
     }
 
@@ -113,8 +118,8 @@ impl SdfBoundingBox {
         let z_axis = self.matrix.column(2);
         // Get bounding box scale in local coordinates
         let x_scale: f32 = x_axis.iter().map(|x| *x * *x).sum();
-        let y_scale: f32 = x_axis.iter().map(|x| *x * *x).sum();
-        let z_scale: f32 = x_axis.iter().map(|x| *x * *x).sum();
+        let y_scale: f32 = y_axis.iter().map(|x| *x * *x).sum();
+        let z_scale: f32 = z_axis.iter().map(|x| *x * *x).sum();
         // Get normalized axis of bound boxes longest side
         let split_axis = {
             if x_scale >= y_scale && x_scale >= z_scale {
@@ -140,13 +145,16 @@ impl SdfBoundingBox {
         let mat = Matrix4::from_column_slice(
             &trans.compute_matrix().to_cols_array()
         ) * self.matrix;
+        let inv = Matrix4::from_column_slice(
+            &Transform {
+                translation: -trans.translation,
+                rotation: trans.rotation.inverse(),
+                scale: trans.scale.recip(),
+            }.compute_matrix().to_cols_array()
+        ) * self.inverse;
         SdfBoundingBox {
             matrix: mat,
-            inverse: mat.try_inverse()
+            inverse: inv,
         }
-    }
-
-    pub fn get_info(&self) {
-        println!("Matrix: {}", self.matrix);
     }
 }

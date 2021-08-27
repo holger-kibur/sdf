@@ -126,6 +126,10 @@ impl SdfNode {
         }
     }
 
+    pub fn downtree(&self, point: Vec3) -> Vec3 {
+        self.intern.downtree_transform(point)
+    }
+
     pub fn full_clone(&self) -> Self {
         SdfNode {
             slots: self.slots.iter().map(|(_, child)| child.full_clone()).collect(),
@@ -144,6 +148,20 @@ impl SdfNode {
             }
             println!("{}: {:?}, slots: {}", level, front.intern, front.slots.num_elements());
             front.bbox.unwrap_or(SdfBoundingBox::zero()).get_info()
+        }
+    }
+
+    pub fn nearest_neighbor(&self, point: Vec3) -> &SdfNode {
+        let mut index_stack: VecDeque<usize> = VecDeque::new();
+        index_stack.push_back(0);
+        while !index_stack.is_empty() {
+            // This part won't be in the shader code because the tree will be flattened.
+            let (parent_ref, trans_point) = index_stack.iter().fold(
+                (self, point),
+                |acc, x| (&acc.0.slots[*x], acc.0.downtree(acc.1))
+            );
+            // Starting from here is the shader code
+            for 
         }
     }
 }
@@ -367,4 +385,11 @@ impl SdfElement for SdfSurfaceSin {
             amplitude: self.amplitude,
         })
     }
+}
+
+#[derive(Debug)]
+pub struct SdfLineSegment {
+    pub origin: Vec3,
+    pub direction: Vec3,
+    pub length: f32,
 }

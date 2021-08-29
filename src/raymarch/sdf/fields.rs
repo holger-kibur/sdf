@@ -45,6 +45,7 @@ impl SdfNode {
             let bbox = self.intern.get_bbox_from_slots(
                 self.slots.iter_mut()
                     .map(|(_, node)| node.calc_bbox_assign())
+                    .filter(|bbox| !bbox.is_zero()) // Filter after bbox calculation so entire tree is initialized
                     .collect::<Vec<SdfBoundingBox>>()
                     .as_slice()
             );
@@ -151,19 +152,57 @@ impl SdfNode {
         }
     }
 
-    pub fn nearest_neighbor(&self, point: Vec3) -> &SdfNode {
-        let mut index_stack: VecDeque<usize> = VecDeque::new();
-        index_stack.push_back(0);
-        while !index_stack.is_empty() {
-            // This part won't be in the shader code because the tree will be flattened.
-            let (parent_ref, trans_point) = index_stack.iter().fold(
-                (self, point),
-                |acc, x| (&acc.0.slots[*x], acc.0.downtree(acc.1))
-            );
-            // Starting from here is the shader code
-            for 
+    pub fn could_contain(&self, point: Vec3) -> bool {
+        assert!(
+            self.is_finished(),
+            "Tried testing point-in-bbox on an unfinished SDF node!"
+        );
+        self.bbox.unwrap().contains(point)
+    }
+
+    pub fn diverges(&self, point: Vec3) -> Vec<&SdfNode> {
+        assert!(
+            self.is_finished(), 
+            "Tried testing point-tree divergence on an unfinished SDF node!"
+        );
+        if self.bbox.unwrap().contains(point) {
+            self.interior_diverges(point)
+        } else {
+            Vec::new()
         }
     }
+
+    fn interior_diverges(&self, point: Vec3) -> Vec<&SdfNode> {
+        let diverge_list: Vec<&SdfNode> = self.slots.iter()
+            .filter(|(_, node)| node.could_contain(self.downtree(point)))
+            .map(|(_, node)| node.interior_diverges(point))
+            .flatten()
+            .collect();
+        if diverge_list.len() == 0 {
+            vec![self]
+        } else {
+            diverge_list
+        }
+    }
+
+    // pub fn nearest_neighbor(&self, point: Vec3) -> &SdfNode {
+    //     // Intentionally scuffed nearest neighbor search because we want this
+    //     // to be as close to the shader code as possible.
+    //     let mut index_stack: VecDeque<usize> = VecDeque::new();
+    //     index_stack.push_back(0);
+    //     while !index_stack.is_empty() {
+    //         // This part won't be in the shader code because the tree will be flattened.
+    //         let (parent_ref, trans_point) = index_stack[..-1].iter().fold(
+    //             (self, point),
+    //             |acc, x| (&acc.0.slots[*x], acc.0.downtree(acc.1))
+    //         );
+    //         // Starting from here is the shader code
+    //         let top_index = *index_stack.back().unwrap();
+    //         if !parent_ref[top_index].slots.is_empty() {
+
+    //         }
+    //     }
+    // }
 }
 
 pub struct SdfElementInfo {

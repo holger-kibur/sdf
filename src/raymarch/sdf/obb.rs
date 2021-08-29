@@ -1,5 +1,9 @@
-use nalgebra::{Matrix4, Vector4, matrix, Matrix4xX};
-use std::cmp::{Ordering};
+use nalgebra::{Matrix4, Vector4, matrix, Matrix4xX, Point};
+use std::{
+    convert::TryInto,
+    cmp::Ordering,
+};
+use float_cmp::approx_eq;
 use bevy::prelude::*;
 
 const VERT_LIST: [Vector4<f32>; 8] = [
@@ -156,5 +160,19 @@ impl SdfBoundingBox {
             matrix: mat,
             inverse: inv,
         }
+    }
+
+    pub fn is_zero(&self) -> bool {
+        Transform::from_matrix(Mat4::from_cols_array(
+            &self.matrix.iter()
+                .map(|comp| *comp)
+                .collect::<Vec<f32>>()
+                .try_into().unwrap()
+        )).scale.as_ref().iter()
+            .all(|comp| approx_eq!(f32, *comp, 0.0, ulps = 2))
+    }
+    
+    pub fn contains(&self, point: Vec3) -> bool {
+        self.inverse.transform_point(&Point::from_slice(point.as_ref())).coords.amax() <= 1.0
     }
 }

@@ -7,10 +7,21 @@ use bevy::{
 };
 use super::obb::*;
 
+pub struct NnResult<'a> {
+    pub node: &'a SdfNode,
+    pub distance: f32,
+}
+
+pub struct NodeDistInfo {
+    pub minimum_dist: f32,
+    pub centroid_dist: f32,
+}
+
 pub struct SdfNode {
     pub slots: StableVec<SdfNode>,
     intern: Box<dyn SdfElement>,
     bbox: Option<SdfBoundingBox>,
+    expanded: bool,
 }
 
 impl SdfNode {
@@ -19,6 +30,7 @@ impl SdfNode {
             slots: StableVec::with_capacity(usize::min(intern.get_info().num_slots, 128)),
             intern: Box::new(intern),
             bbox: None,
+            expanded: false,
         }
     }
 
@@ -63,6 +75,10 @@ impl SdfNode {
         self.bbox.is_some()
     }
 
+    pub fn is_primitive(&self) -> bool {
+        self.intern.get_info().is_primitive
+    }
+
     pub fn get_tree_expansion(&self) -> SdfNode {
         self.full_clone().tree_expand()
     }
@@ -89,7 +105,8 @@ impl SdfNode {
                             div_slots
                         },
                         intern: self.intern.clone(),
-                        bbox: self.bbox
+                        bbox: self.bbox,
+                        expanded: true,
                     }
                 } else {
                     SdfNode {
@@ -99,20 +116,23 @@ impl SdfNode {
                                 SdfNode {
                                     slots: left_children,
                                     intern: self.intern.clone(),
-                                    bbox: None
+                                    bbox: None,
+                                    expanded: false,
                                 }.box_and_expand()
                             );
                             div_slots.push(
                                 SdfNode {
                                     slots: right_children,
                                     intern: self.intern.clone(),
-                                    bbox: None
+                                    bbox: None,
+                                    expanded: false,
                                 }.box_and_expand()
                             );
                             div_slots
                         },
                         intern: self.intern.clone(),
-                        bbox: self.bbox
+                        bbox: self.bbox,
+                        expanded: true,
                     }
                 }
             } else {
@@ -123,6 +143,7 @@ impl SdfNode {
                 slots: self.slots.iter_mut().map(|(_, child)| child.tree_expand()).collect(),
                 intern: self.intern.clone(),
                 bbox: self.bbox,
+                expanded: true,
             }
         }
     }
@@ -136,6 +157,7 @@ impl SdfNode {
             slots: self.slots.iter().map(|(_, child)| child.full_clone()).collect(),
             intern: self.intern.clone(),
             bbox: self.bbox,
+            expanded: self.expanded,
         }
     }
 
@@ -148,7 +170,7 @@ impl SdfNode {
                 disp_queue.push_back((level + 1, child));
             }
             println!("{}: {:?}, slots: {}", level, front.intern, front.slots.num_elements());
-            front.bbox.unwrap_or(SdfBoundingBox::zero()).get_info()
+            // front.bbox.unwrap_or(SdfBoundingBox::zero()).get_info()
         }
     }
 
@@ -160,49 +182,57 @@ impl SdfNode {
         self.bbox.unwrap().contains(point)
     }
 
-    pub fn diverges(&self, point: Vec3) -> Vec<&SdfNode> {
+    pub fn bbox_dist_info(&self, point: Vec3) -> NodeDistInfo {
         assert!(
-            self.is_finished(), 
-            "Tried testing point-tree divergence on an unfinished SDF node!"
+            self.is_finished(),
+            "Tried getting bounding-box distance info on an unfinished SDF node!"
         );
-        if self.bbox.unwrap().contains(point) {
-            self.interior_diverges(point)
-        } else {
-            Vec::new()
+        NodeDistInfo {
+            minimum_dist: self.bbox.unwrap().distance_to(point),
+            centroid_dist: (self.bbox.unwrap().centroid() - point).length()
         }
     }
 
-    fn interior_diverges(&self, point: Vec3) -> Vec<&SdfNode> {
-        let diverge_list: Vec<&SdfNode> = self.slots.iter()
-            .filter(|(_, node)| node.could_contain(self.downtree(point)))
-            .map(|(_, node)| node.interior_diverges(point))
-            .flatten()
-            .collect();
-        if diverge_list.len() == 0 {
-            vec![self]
+    pub fn nearest_neighbor(&self, point: Vec3) -> NnResult {
+        println!("called");
+        if self.is_primitive() {
+            NnResult {
+                node: self,
+                distance: self.intern.distance_to(self.bbox.unwrap().in_box_basis(point)),
+            }
         } else {
-            diverge_list
+            let mut min_centroids = self.slots.iter()
+                .map(|(_, node)| node.bbox_dist_info(point))
+                .collect::<Vec<NodeDistInfo>>();
+            let min_centroid_dist = min_centroids.iter()
+                .map(|dist_info| CmpFloat(dist_info.centroid_dist))
+                .min().unwrap().0;
+            min_centroids.sort_unstable_by_key(|dist_info| CmpFloat(dist_info.minimum_dist));
+            // println!("closest_centroid: {}, min: {}", min_centroids[0].centroid_dist, min_centroids[0].minimum_dist);
+            self.slots.iter()
+                // Downwards pruning
+                .take_while(|(i, _)| min_centroids[*i].minimum_dist < min_centroid_dist)
+                .fold(
+                    NnResult {
+                        node: self,
+                        distance: f32::INFINITY,
+                    },
+                    |acc, (i, node)| {
+                        // Upwards pruning
+                        if min_centroids[i].minimum_dist >= acc.distance {
+                            acc
+                        } else {
+                            let child_nn = node.nearest_neighbor(node.downtree(point));
+                            if child_nn.distance < acc.distance {
+                                child_nn
+                            } else {
+                                acc
+                            }
+                        }
+                    }
+                )
         }
     }
-
-    // pub fn nearest_neighbor(&self, point: Vec3) -> &SdfNode {
-    //     // Intentionally scuffed nearest neighbor search because we want this
-    //     // to be as close to the shader code as possible.
-    //     let mut index_stack: VecDeque<usize> = VecDeque::new();
-    //     index_stack.push_back(0);
-    //     while !index_stack.is_empty() {
-    //         // This part won't be in the shader code because the tree will be flattened.
-    //         let (parent_ref, trans_point) = index_stack[..-1].iter().fold(
-    //             (self, point),
-    //             |acc, x| (&acc.0.slots[*x], acc.0.downtree(acc.1))
-    //         );
-    //         // Starting from here is the shader code
-    //         let top_index = *index_stack.back().unwrap();
-    //         if !parent_ref[top_index].slots.is_empty() {
-
-    //         }
-    //     }
-    // }
 }
 
 pub struct SdfElementInfo {
@@ -289,6 +319,9 @@ pub trait SdfElement: fmt::Debug {
     fn downtree_transform(&self, point: Vec3) -> Vec3 {
         point
     }
+    fn distance_to(&self, point: Vec3) -> f32 {
+        point.length()
+    }
     fn clone(&self) -> Box<dyn SdfElement>;
 }
 
@@ -312,6 +345,10 @@ impl SdfElement for SdfSphere {
         Box::new(SdfSphere {
             radius: self.radius
         })
+    }
+
+    fn distance_to(&self, point: Vec3) -> f32 {
+        point.length() - self.radius
     }
 }
 

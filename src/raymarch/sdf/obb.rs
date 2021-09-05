@@ -20,7 +20,7 @@ const VERT_LIST: [Vector4<f32>; 8] = [
 // I'm so done with this floats-can't-be-compared bullshit; I don't care 
 // if it isn't right. 
 #[derive(PartialEq)]
-struct CmpFloat(f32);
+pub struct CmpFloat(pub f32);
 
 impl Eq for CmpFloat {}
 
@@ -162,16 +162,40 @@ impl SdfBoundingBox {
         }
     }
 
-    pub fn is_zero(&self) -> bool {
+    pub fn get_transform(&self) -> Transform {
         Transform::from_matrix(Mat4::from_cols_array(
             &self.matrix.iter()
-                .map(|comp| *comp)
+                .copied()
                 .collect::<Vec<f32>>()
                 .try_into().unwrap()
-        )).scale.as_ref().iter()
+        ))
+    }
+
+    pub fn in_box_basis(&self, point: Vec3) -> Vec3 {
+        let nalgebra_point = self.inverse.transform_point(&Point::from_slice(point.as_ref())).coords;
+        let mut vec_iter = nalgebra_point.into_iter();
+        Vec3::new(
+            *vec_iter.next().unwrap(),
+            *vec_iter.next().unwrap(),
+            *vec_iter.next().unwrap(),
+        )
+    }
+
+    pub fn is_zero(&self) -> bool {
+        self.get_transform().scale.as_ref().iter()
             .all(|comp| approx_eq!(f32, *comp, 0.0, ulps = 2))
     }
-    
+
+    pub fn distance_to(&self, point: Vec3) -> f32 {
+        let trans = self.in_box_basis(point);
+        let q = trans.abs() - Vec3::splat(1.0);
+        q.max(Vec3::ZERO).length() + q.y.max(q.z).max(q.x).min(0.0)
+    }
+
+    pub fn centroid(&self) -> Vec3 {
+        self.get_transform().translation
+    }
+
     pub fn contains(&self, point: Vec3) -> bool {
         self.inverse.transform_point(&Point::from_slice(point.as_ref())).coords.amax() <= 1.0
     }

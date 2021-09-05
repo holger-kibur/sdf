@@ -1,3 +1,7 @@
-Experimenting with building a raymarching + signed distance field (SDF) based graphics pipeline using Bevy. 
+Attempting to make a game-ready signed distance field (SDF) and raymarching (RM) based graphics engine, built on top of a traditional rasterization pipeline.
 
-Active development is happening only in the sdf/src/raymarch/sdf folder for now, everything else is left over stuff from previous experiments.
+SDF+RM has the potential to trivialize many of the hardships of creating convincing visuals in rasterization based graphics (shadows, reflections, global illumination, raytracing, diffraction, LOD). It is also perfectly suited for implementing real-time physics, as the information that SDFs provide is exactly what's needed to calculate collisions between objects in a physics simulation (https://www.youtube.com/watch?v=icU6Bm-HZ-E).
+
+Inigo Quilez (iquilezles.org) has already demonstrated that performant and detailed SDF+RM based graphics is possible on standard GPUs (demos: https://iquilezles.org/prods/index.htm) with cleverly written shaders. This is all (at least to my knowledge) without the benefit of having a full supporting pipeline behind the shaders e.g. using trees to reduce nearest neighbor search complexity, offloading predictable calculations to the CPU, optimizing scenes for rendering, LOD, etc.
+
+This project seeks to transition SDF+RM technology from the many impressive demos Quilez has created into a comprehensive engine that can be used to create visuals and video games effectively. Currently I am developing the core tree structure of the engine, along with an algorithm to perform a nearest neighbor search on it based of off the existing branch-and-prune R-tree kNN algorithm.

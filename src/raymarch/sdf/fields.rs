@@ -194,7 +194,6 @@ impl SdfNode {
     }
 
     pub fn nearest_neighbor(&self, point: Vec3) -> NnResult {
-        println!("called");
         if self.is_primitive() {
             NnResult {
                 node: self,
@@ -207,11 +206,12 @@ impl SdfNode {
             let min_centroid_dist = min_centroids.iter()
                 .map(|dist_info| CmpFloat(dist_info.centroid_dist))
                 .min().unwrap().0;
+                println!("min centroid: {}", min_centroid_dist);
             min_centroids.sort_unstable_by_key(|dist_info| CmpFloat(dist_info.minimum_dist));
             // println!("closest_centroid: {}, min: {}", min_centroids[0].centroid_dist, min_centroids[0].minimum_dist);
             self.slots.iter()
                 // Downwards pruning
-                .take_while(|(i, _)| min_centroids[*i].minimum_dist < min_centroid_dist)
+                // .filter(|(i, _)| min_centroids[*i].minimum_dist < min_centroid_dist)
                 .fold(
                     NnResult {
                         node: self,
@@ -219,16 +219,16 @@ impl SdfNode {
                     },
                     |acc, (i, node)| {
                         // Upwards pruning
-                        if min_centroids[i].minimum_dist >= acc.distance {
-                            acc
-                        } else {
+                        // if min_centroids[i].minimum_dist >= acc.distance {
+                        //     acc
+                        // } else {
                             let child_nn = node.nearest_neighbor(node.downtree(point));
                             if child_nn.distance < acc.distance {
                                 child_nn
                             } else {
                                 acc
                             }
-                        }
+                        // }
                     }
                 )
         }
@@ -270,7 +270,7 @@ impl SdfElementInfo {
             is_primitive: false,
             op_id,
             is_union: true,
-            min_slots: 2,
+            min_slots: 1,
         }
     }
 }

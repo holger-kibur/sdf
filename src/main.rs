@@ -50,5 +50,5 @@ fn main() {
     let sdf_comp = sdf.finalize();
     // sdf_comp.bf_display();
     println!("{}", sdf_comp.nearest_neighbor(Vec3::new(10.0, 10.0, 40.0)).distance);
-    sdf_comp.get_tree_expansion().nearest_neighbor(Vec3::new(10.0, 10.0, 40.0));
+    println!("{}", sdf_comp.get_tree_expansion().nearest_neighbor(Vec3::new(10.0, 10.0, 40.0)).distance);
 }

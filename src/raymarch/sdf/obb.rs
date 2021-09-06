@@ -192,6 +192,10 @@ impl SdfBoundingBox {
         q.max(Vec3::ZERO).length() + q.y.max(q.z).max(q.x).min(0.0)
     }
 
+    pub fn max_distance(&self, point: Vec3) -> f32 {
+        3.0 * (point - self.centroid()).length() - 2.0 * self.distance_to(point)
+    }
+
     pub fn centroid(&self) -> Vec3 {
         self.get_transform().translation
     }

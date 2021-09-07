@@ -13,8 +13,8 @@ pub struct NnResult<'a> {
 }
 
 pub struct NodeDistInfo {
-    pub minimum_dist: f32,
-    pub centroid_dist: f32,
+    pub min_bound: f32,
+    pub max_bound: f32,
 }
 
 pub struct SdfNode {
@@ -188,8 +188,8 @@ impl SdfNode {
             "Tried getting bounding-box distance info on an unfinished SDF node!"
         );
         NodeDistInfo {
-            minimum_dist: self.bbox.unwrap().distance_to(point),
-            centroid_dist: (self.bbox.unwrap().centroid() - point).length()
+            min_bound: self.bbox.unwrap().distance_to(point),
+            max_bound: self.bbox.unwrap().max_distance(point)
         }
     }
 
@@ -200,18 +200,18 @@ impl SdfNode {
                 distance: self.intern.distance_to(self.bbox.unwrap().in_box_basis(point)),
             }
         } else {
-            let mut min_centroids = self.slots.iter()
+            let mut min_maxbounds = self.slots.iter()
                 .map(|(_, node)| node.bbox_dist_info(point))
                 .collect::<Vec<NodeDistInfo>>();
-            let min_centroid_dist = min_centroids.iter()
-                .map(|dist_info| CmpFloat(dist_info.centroid_dist))
+            let min_maxbound_dist = min_maxbounds.iter()
+                .map(|dist_info| CmpFloat(dist_info.max_bound))
                 .min().unwrap().0;
-                println!("min centroid: {}", min_centroid_dist);
-            min_centroids.sort_unstable_by_key(|dist_info| CmpFloat(dist_info.minimum_dist));
+                println!("min maxbound: {}", min_maxbound_dist);
+            min_maxbounds.sort_unstable_by_key(|dist_info| CmpFloat(dist_info.min_bound));
             // println!("closest_centroid: {}, min: {}", min_centroids[0].centroid_dist, min_centroids[0].minimum_dist);
             self.slots.iter()
                 // Downwards pruning
-                // .filter(|(i, _)| min_centroids[*i].minimum_dist < min_centroid_dist)
+                .filter(|(i, _)| min_maxbounds[*i].min_bound < min_maxbound_dist)
                 .fold(
                     NnResult {
                         node: self,
@@ -219,7 +219,7 @@ impl SdfNode {
                     },
                     |acc, (i, node)| {
                         // Upwards pruning
-                        // if min_centroids[i].minimum_dist >= acc.distance {
+                        // if min_maxbounds[i].min_bound >= acc.distance {
                         //     acc
                         // } else {
                             let child_nn = node.nearest_neighbor(node.downtree(point));

@@ -70,7 +70,7 @@ impl SdfBoundingBox {
             sub_boxes.iter()
                 .map(|sub_box| VERT_LIST.iter()
                     .map(move |vert| (sub_box.matrix * vert).iter()
-                        .map(|x| *x).collect::<Vec<f32>>())
+                        .copied().collect::<Vec<f32>>())
                     .flatten())
                 .flatten()
         );
@@ -188,12 +188,17 @@ impl SdfBoundingBox {
 
     pub fn distance_to(&self, point: Vec3) -> f32 {
         let trans = self.in_box_basis(point);
+        println!("{}", trans);
         let q = trans.abs() - Vec3::splat(1.0);
+        println!("{}", q);
         q.max(Vec3::ZERO).length() + q.y.max(q.z).max(q.x).min(0.0)
     }
 
     pub fn max_distance(&self, point: Vec3) -> f32 {
-        3.0 * (point - self.centroid()).length() - 2.0 * self.distance_to(point)
+        let nalgebra_point = Point::from_slice(point.extend(1.0).as_ref()).coords;
+        VERT_LIST.iter()
+            .map(|vert| CmpFloat(((self.matrix * vert) - nalgebra_point).magnitude()))
+            .max().unwrap().0
     }
 
     pub fn centroid(&self) -> Vec3 {

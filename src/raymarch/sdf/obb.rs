@@ -36,6 +36,21 @@ impl Ord for CmpFloat {
     }
 }
 
+fn vec_bevy_to_nalgebra(bevy_vec: Vec4) -> Vector4<f32> {
+    Vector4::from_row_slice(bevy_vec.as_ref())
+}
+
+fn vec_nalgebra_to_bevy(nalgebra_vec: Vector4<f32>) -> Vec4 {
+    // Fully qualified syntax because I am fully qualified to write
+    // this kind of code B)
+    <Vec4 as From<[f32; 4]>>::from(
+        nalgebra_vec.iter()
+            .copied()
+            .collect::<Vec<f32>>()
+            .try_into().unwrap()
+    )
+}
+
 #[derive(Copy, Clone)]
 pub struct SdfBoundingBox {
     matrix: Matrix4<f32>,
@@ -149,13 +164,9 @@ impl SdfBoundingBox {
         let mat = Matrix4::from_column_slice(
             &trans.compute_matrix().to_cols_array()
         ) * self.matrix;
-        let inv = Matrix4::from_column_slice(
-            &Transform {
-                translation: -trans.translation,
-                rotation: trans.rotation.inverse(),
-                scale: trans.scale.recip(),
-            }.compute_matrix().to_cols_array()
-        ) * self.inverse;
+        let inv = self.inverse * Matrix4::from_column_slice(
+            &trans.compute_matrix().inverse().to_cols_array()
+        );
         SdfBoundingBox {
             matrix: mat,
             inverse: inv,
@@ -171,13 +182,15 @@ impl SdfBoundingBox {
         ))
     }
 
-    pub fn in_box_basis(&self, point: Vec3) -> Vec3 {
-        let nalgebra_point = self.inverse.transform_point(&Point::from_slice(point.as_ref())).coords;
-        let mut vec_iter = nalgebra_point.into_iter();
-        Vec3::new(
-            *vec_iter.next().unwrap(),
-            *vec_iter.next().unwrap(),
-            *vec_iter.next().unwrap(),
+    pub fn in_box_basis(&self, point: Vec4) -> Vec4 {
+        vec_nalgebra_to_bevy(
+            self.inverse * vec_bevy_to_nalgebra(point)
+        )
+    }
+
+    pub fn in_parent_basis(&self, point: Vec4) -> Vec4 {
+        vec_nalgebra_to_bevy(
+            self.matrix * vec_bevy_to_nalgebra(point)
         )
     }
 
@@ -187,11 +200,11 @@ impl SdfBoundingBox {
     }
 
     pub fn distance_to(&self, point: Vec3) -> f32 {
-        let trans = self.in_box_basis(point);
-        println!("{}", trans);
-        let q = trans.abs() - Vec3::splat(1.0);
-        println!("{}", q);
-        q.max(Vec3::ZERO).length() + q.y.max(q.z).max(q.x).min(0.0)
+        let trans = self.in_box_basis(point.extend(1.0));
+        let q_local = trans.abs() - Vec4::splat(1.0);
+        let q_parent = self.in_parent_basis(q_local);
+        q_parent.max(Vec4::ZERO).length()
+            + q_parent.y.max(q_parent.z).max(q_parent.x).min(0.0)
     }
 
     pub fn max_distance(&self, point: Vec3) -> f32 {

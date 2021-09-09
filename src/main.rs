@@ -58,6 +58,6 @@ fn main() {
     )
     .transform(Transform::from_xyz(0.0, 0.0, 5.0))
     .finalize();
-    let dist_info = samp_sphere.bbox_dist_info(Vec3::new(4.0, 0.0, 0.0));
+    let dist_info = samp_sphere.bbox_dist_info(Vec3::new(4.0, 4.0, 0.0));
     println!("minbound: {}, maxbound: {}", dist_info.min_bound, dist_info.max_bound);
 }

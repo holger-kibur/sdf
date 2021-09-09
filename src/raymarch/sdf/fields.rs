@@ -197,7 +197,7 @@ impl SdfNode {
         if self.is_primitive() {
             NnResult {
                 node: self,
-                distance: self.intern.distance_to(self.bbox.unwrap().in_box_basis(point)),
+                distance: self.intern.distance_to(self.bbox.unwrap().in_box_basis(point.extend(1.0)).truncate()),
             }
         } else {
             let mut min_maxbounds = self.slots.iter()
@@ -206,7 +206,7 @@ impl SdfNode {
             let min_maxbound_dist = min_maxbounds.iter()
                 .map(|dist_info| CmpFloat(dist_info.max_bound))
                 .min().unwrap().0;
-                println!("min maxbound: {}", min_maxbound_dist);
+                // println!("min maxbound: {}", min_maxbound_dist);
             min_maxbounds.sort_unstable_by_key(|dist_info| CmpFloat(dist_info.min_bound));
             // println!("closest_centroid: {}, min: {}", min_centroids[0].centroid_dist, min_centroids[0].minimum_dist);
             self.slots.iter()

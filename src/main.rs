@@ -53,11 +53,27 @@ fn main() {
     // println!("{}", sdf_comp.get_tree_expansion().nearest_neighbor(Vec3::new(10.0, 10.0, 40.0)).distance);
     let samp_sphere = SdfBuilder::primitive(
         SdfSphere {
-            radius: 2.0,
+            radius: 5.0,
         }
     )
-    .transform(Transform::from_xyz(0.0, 0.0, 5.0))
+    .transform(Transform::from_xyz(3.0, 0.0, 3.0))
+    .operation(
+        SdfUnion {
+            smooth_radius: 0.0,
+        }
+    )
+    .with(
+        SdfBuilder::primitive(
+            SdfSphere {
+                radius: 3.0,
+            }
+        )
+        .transform(Transform::from_xyz(-3.0, 0.0, -3.0))
+    )
     .finalize();
-    let dist_info = samp_sphere.bbox_dist_info(Vec3::new(4.0, 4.0, 0.0));
-    println!("minbound: {}, maxbound: {}", dist_info.min_bound, dist_info.max_bound);
+    println!("matrix: {}", samp_sphere.bbox.unwrap().matrix);
+    println!("inverse: {}", samp_sphere.bbox.unwrap().inverse);
+    println!("{}", samp_sphere.bbox.unwrap().distance_to(Vec3::new(-3.0, 0.0, 6.0)));
+    // let dist_info = samp_sphere.bbox_dist_info(Vec3::new(0.0, 0.0, 0.0));
+    // println!("minbound: {}, maxbound: {}", dist_info.min_bound, dist_info.max_bound);
 }

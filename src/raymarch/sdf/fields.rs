@@ -20,7 +20,7 @@ pub struct NodeDistInfo {
 pub struct SdfNode {
     pub slots: StableVec<SdfNode>,
     intern: Box<dyn SdfElement>,
-    bbox: Option<SdfBoundingBox>,
+    pub bbox: Option<SdfBoundingBox>,
     expanded: bool,
 }
 
@@ -211,7 +211,7 @@ impl SdfNode {
             // println!("closest_centroid: {}, min: {}", min_centroids[0].centroid_dist, min_centroids[0].minimum_dist);
             self.slots.iter()
                 // Downwards pruning
-                .filter(|(i, _)| min_maxbounds[*i].min_bound < min_maxbound_dist)
+                .take_while(|(i, _)| min_maxbounds[*i].min_bound < min_maxbound_dist)
                 .fold(
                     NnResult {
                         node: self,

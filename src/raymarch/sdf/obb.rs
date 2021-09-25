@@ -53,8 +53,8 @@ fn vec_nalgebra_to_bevy(nalgebra_vec: Vector4<f32>) -> Vec4 {
 
 #[derive(Copy, Clone)]
 pub struct SdfBoundingBox {
-    matrix: Matrix4<f32>,
-    inverse: Matrix4<f32>,
+    pub matrix: Matrix4<f32>,
+    pub inverse: Matrix4<f32>,
 }
 
 impl SdfBoundingBox {
@@ -119,10 +119,13 @@ impl SdfBoundingBox {
         let centroid = (box_max + box_min) / 2.0;
         // Get scale of new bounding box using centroid
         let scale = box_max - centroid;
+        let scale_recip = scale.map(|x| 1.0 / x);
         // Create new bounding box matrix in eigenbasis of vertices, then change to standard basis
         let new_bbox_mat = Matrix4::new_translation(&vert_mean.xyz())
             * eigen_basis
             * Matrix4::new_nonuniform_scaling(&scale.xyz()).append_translation(&centroid.xyz());
+        let mut scale_iter = scale.iter();
+        println!("eigen inverse: {}", (eigen_basis * Matrix4::new_nonuniform_scaling(&scale_recip.xyz())).transpose());
         SdfBoundingBox {
             matrix: new_bbox_mat,
             inverse: new_bbox_mat.try_inverse().unwrap(),
@@ -201,8 +204,11 @@ impl SdfBoundingBox {
 
     pub fn distance_to(&self, point: Vec3) -> f32 {
         let trans = self.in_box_basis(point.extend(1.0));
+        println!("trans: {}", trans);
         let q_local = trans.abs() - Vec4::splat(1.0);
-        let q_parent = self.in_parent_basis(q_local);
+        println!("q_local: {}", q_local);
+        let q_parent = q_local;
+        println!("q_parent: {}", q_parent);
         q_parent.max(Vec4::ZERO).length()
             + q_parent.y.max(q_parent.z).max(q_parent.x).min(0.0)
     }

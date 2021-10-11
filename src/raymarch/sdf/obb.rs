@@ -54,6 +54,7 @@ fn vec_nalgebra_to_bevy(nalgebra_vec: Vector4<f32>) -> Vec4 {
 #[derive(Copy, Clone)]
 pub struct SdfBoundingBox {
     pub matrix: Matrix4<f32>,
+    pub scale: Vector4<f32>,
     pub inverse: Matrix4<f32>,
 }
 
@@ -61,6 +62,12 @@ impl SdfBoundingBox {
     pub fn unit() -> Self {
         SdfBoundingBox {
             matrix: Matrix4::identity(),
+            scale: matrix![
+                1.0;
+                1.0;
+                1.0;
+                0.0;
+            ],
             inverse: Matrix4::identity(),
         }
     }
@@ -68,6 +75,7 @@ impl SdfBoundingBox {
     pub fn zero() -> Self {
         SdfBoundingBox {
             matrix: Matrix4::zeros(),
+            scale: Vector4::zeros(),
             inverse: matrix![
                 f32::INFINITY, 0.0, 0.0, 0.0;
                 0.0, f32::INFINITY, 0.0, 0.0;
@@ -125,9 +133,10 @@ impl SdfBoundingBox {
             * eigen_basis
             * Matrix4::new_nonuniform_scaling(&scale.xyz()).append_translation(&centroid.xyz());
         let mut scale_iter = scale.iter();
-        println!("eigen inverse: {}", (eigen_basis * Matrix4::new_nonuniform_scaling(&scale_recip.xyz())).transpose());
+        // println!("eigen inverse: {}", (eigen_basis * Matrix4::new_nonuniform_scaling(&scale_recip.xyz())).transpose());
         SdfBoundingBox {
             matrix: new_bbox_mat,
+            scale,
             inverse: new_bbox_mat.try_inverse().unwrap(),
         }
     }
@@ -172,6 +181,7 @@ impl SdfBoundingBox {
         );
         SdfBoundingBox {
             matrix: mat,
+            scale: self.scale.component_mul(&vec_bevy_to_nalgebra(trans.scale.extend(1.0))),
             inverse: inv,
         }
     }
@@ -204,13 +214,10 @@ impl SdfBoundingBox {
 
     pub fn distance_to(&self, point: Vec3) -> f32 {
         let trans = self.in_box_basis(point.extend(1.0));
-        println!("trans: {}", trans);
-        let q_local = trans.abs() - Vec4::splat(1.0);
-        println!("q_local: {}", q_local);
-        let q_parent = q_local;
-        println!("q_parent: {}", q_parent);
-        q_parent.max(Vec4::ZERO).length()
-            + q_parent.y.max(q_parent.z).max(q_parent.x).min(0.0)
+        // println!("scale: {}", self.scale);
+        let q_local = (trans.abs() - Vec4::splat(1.0)) * vec_nalgebra_to_bevy(self.scale);
+        // println!("q_local: {}", q_local);
+        q_local.max(Vec4::ZERO).length() + q_local.y.max(q_local.z).max(q_local.x).min(0.0)
     }
 
     pub fn max_distance(&self, point: Vec3) -> f32 {

@@ -1,4 +1,7 @@
-use nalgebra::{Matrix4, Vector4, matrix, Matrix4xX, Point};
+use nalgebra::{
+    Matrix4, Vector4, matrix, Matrix, Matrix4xX, Point, U1, U4, Scalar, Const,
+    storage::{Storage}
+};
 use std::{
     convert::TryInto,
     cmp::Ordering,
@@ -51,11 +54,20 @@ fn vec_nalgebra_to_bevy(nalgebra_vec: Vector4<f32>) -> Vec4 {
     )
 }
 
+pub fn vec_nalgebra_minmax<T>(nalgebra_vec: Matrix<f32, U4, U1, T>) -> Vector4<f32> where 
+    T: Storage<f32, Const<4_usize>>
+{
+    let mut onehot = [0.0, 0.0, 0.0, 0.0];
+    onehot[nalgebra_vec.iamax()] = 1.0;
+    Vector4::from_row_slice(&onehot)
+}
+
 #[derive(Copy, Clone)]
 pub struct SdfBoundingBox {
     pub matrix: Matrix4<f32>,
     pub scale: Vector4<f32>,
-    pub inverse: Matrix4<f32>,
+    pub full_inverse: Matrix4<f32>,
+    pub trans_inverse: Matrix4<f32>,
 }
 
 impl SdfBoundingBox {
@@ -68,7 +80,8 @@ impl SdfBoundingBox {
                 1.0;
                 0.0;
             ],
-            inverse: Matrix4::identity(),
+            full_inverse: Matrix4::identity(),
+            trans_inverse: Matrix4::identity(),
         }
     }
 
@@ -76,12 +89,13 @@ impl SdfBoundingBox {
         SdfBoundingBox {
             matrix: Matrix4::zeros(),
             scale: Vector4::zeros(),
-            inverse: matrix![
+            full_inverse: matrix![
                 f32::INFINITY, 0.0, 0.0, 0.0;
                 0.0, f32::INFINITY, 0.0, 0.0;
                 0.0, 0.0, f32::INFINITY, 0.0;
                 0.0, 0.0, 0.0,           1.0;
             ],
+            trans_inverse: Matrix4::identity(),
         }
     }
 
@@ -110,8 +124,17 @@ impl SdfBoundingBox {
         // Get eigenstuff of covariance matrix. Covariance is symmetric so we gucci.
         let eigen_info = covar_mat.symmetric_eigen();
         // For some reason, symmetric eigen loves to make the W-vector negative sometimes, so we have to set it 
+        // let sort_transform = Matrix4::from_columns(
+        //     eigen_info.eigenvectors.column_iter()
+        //         .map(vec_nalgebra_minmax)
+        //         // .inspect(|x| println!("{}", x))
+        //         .collect::<Vec<Vector4<f32>>>()
+        //         .as_slice()
+        // );
         let mut eigen_basis = eigen_info.eigenvectors;
+        // println!("eigen: {}", eigen_info.eigenvectors);
         eigen_basis.set_column(3, &matrix![0.0; 0.0; 0.0; 1.0;]);
+        eigen_basis.set_row(3, &matrix![0.0, 0.0, 0.0, 1.0;]);
         // Get projections of box verts on normalized eigenvector basis
         let vert_proj_mat = vert_mat_mean_trans * eigen_basis;
         // Get minimums and maximums of verts along eigenvector basis
@@ -133,11 +156,16 @@ impl SdfBoundingBox {
             * eigen_basis
             * Matrix4::new_nonuniform_scaling(&scale.xyz()).append_translation(&centroid.xyz());
         let mut scale_iter = scale.iter();
-        // println!("eigen inverse: {}", (eigen_basis * Matrix4::new_nonuniform_scaling(&scale_recip.xyz())).transpose());
+        // println!("eigen full_inverse: {}", (eigen_basis * Matrix4::new_nonuniform_scaling(&scale_recip.xyz())).transpose());
         SdfBoundingBox {
             matrix: new_bbox_mat,
             scale,
-            inverse: new_bbox_mat.try_inverse().unwrap(),
+            full_inverse: new_bbox_mat
+                .try_inverse()
+                .unwrap(),
+            trans_inverse: (Matrix4::new_translation(&vert_mean.xyz()) * eigen_basis)
+                .try_inverse()
+                .unwrap(),
         }
     }
 
@@ -173,16 +201,22 @@ impl SdfBoundingBox {
     }
 
     pub fn apply_transform(self, trans: Transform) -> Self {
+        let mut no_scale = trans.clone();
+        no_scale.scale = Vec3::new(1.0, 1.0, 1.0);
         let mat = Matrix4::from_column_slice(
             &trans.compute_matrix().to_cols_array()
         ) * self.matrix;
-        let inv = self.inverse * Matrix4::from_column_slice(
+        let full_inv = self.full_inverse * Matrix4::from_column_slice(
             &trans.compute_matrix().inverse().to_cols_array()
+        );
+        let trans_inv = self.trans_inverse * Matrix4::from_column_slice(
+            &no_scale.compute_matrix().inverse().to_cols_array()
         );
         SdfBoundingBox {
             matrix: mat,
-            scale: self.scale.component_mul(&vec_bevy_to_nalgebra(trans.scale.extend(1.0))),
-            inverse: inv,
+            scale: self.scale.component_mul(&vec_bevy_to_nalgebra(trans.scale.extend(0.0))),
+            full_inverse: full_inv,
+            trans_inverse: trans_inv,
         }
     }
 
@@ -197,7 +231,13 @@ impl SdfBoundingBox {
 
     pub fn in_box_basis(&self, point: Vec4) -> Vec4 {
         vec_nalgebra_to_bevy(
-            self.inverse * vec_bevy_to_nalgebra(point)
+            self.full_inverse * vec_bevy_to_nalgebra(point)
+        )
+    }
+
+    pub fn in_box_trans_basis(&self, point: Vec4) -> Vec4 {
+        vec_nalgebra_to_bevy(
+            self.trans_inverse * vec_bevy_to_nalgebra(point)
         )
     }
 
@@ -232,6 +272,6 @@ impl SdfBoundingBox {
     }
 
     pub fn contains(&self, point: Vec3) -> bool {
-        self.inverse.transform_point(&Point::from_slice(point.as_ref())).coords.amax() <= 1.0
+        self.full_inverse.transform_point(&Point::from_slice(point.as_ref())).coords.amax() <= 1.0
     }
 }

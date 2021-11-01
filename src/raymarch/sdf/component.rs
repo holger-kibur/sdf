@@ -20,6 +20,13 @@ struct SdfChildIndicesBlock {
 struct SdfOperationBlock {
     pub op_code: u32,
     pub op_specific: SdfOpSpecificBlock,
-    pub gen_transform: Mat4,
-    pub child_indices: SdfChildIndicesBlock,
+    pub bounding_box: SdfBoundingBoxBlock,
+}
+
+#[repr(C)]
+struct SdfBoundingBoxBlock {
+    pub matrix: Mat4,
+    pub scale: Vec3,
+    pub full_inverse: Mat4,
+    pub trans_inverse: Mat4,
 }

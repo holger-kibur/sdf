@@ -27,7 +27,10 @@ pub struct SdfNode {
 impl SdfNode {
     pub fn new<T: SdfElement + 'static>(intern: T) -> Self {
         SdfNode {
-            slots: StableVec::with_capacity(usize::min(intern.get_info().num_slots, 128)),
+            slots: StableVec::with_capacity(usize::min(
+                intern.get_info().num_slots(),
+                128
+            )),
             intern: Box::new(intern),
             bbox: None,
             expanded: false,
@@ -38,7 +41,7 @@ impl SdfNode {
         let intern_info = self.intern.get_info();
         if intern_info.is_primitive {
             Err("Can't set slots on primitive!")
-        } else if self.slots.num_elements() >= intern_info.num_slots {
+        } else if self.slots.num_elements() >= intern_info.num_slots() {
             Err("Slots already full!")
         } else {
             self.slots.push(child_node);
@@ -48,7 +51,8 @@ impl SdfNode {
 
     pub fn calc_bbox_assign(&mut self) -> SdfBoundingBox {
         assert!(
-            (0..self.intern.get_info().min_slots).all(|ind| self.slots.has_element_at(ind)),
+            self.intern.get_info().is_union &
+            (0..self.intern.get_info().num_slots()).all(|ind| self.slots.has_element_at(ind)),
             "Tried calculating bounding box of SDF node without all required slots filled!"    
         );
         if let Some(bbox) = self.bbox {
@@ -169,7 +173,7 @@ impl SdfNode {
             for (_, child) in front.slots.iter() {
                 disp_queue.push_back((level + 1, child));
             }
-            println!("{}: {:?}, slots: {}", level, front.intern, front.slots.num_elements());
+            println!("{}: {:?}, slots: {}, matrix: {}", level, front.intern, front.slots.num_elements(), front.bbox.unwrap().scale);
             // front.bbox.unwrap_or(SdfBoundingBox::zero()).get_info()
         }
     }
@@ -193,42 +197,103 @@ impl SdfNode {
         }
     }
 
+    /*
+    GLSL version:
+
+    struct SdfBoundingBoxBlock {
+        mat4 matrix;
+        vec3 scale;
+        mat4 full_inverse;
+        mat4 trans_inverse;
+    };
+
+    struct SdfChildIndicesBlock {
+        uint left_child_index;
+        uint right_child_index;
+    };
+
+    struct SdfOperationBlock {
+        uint                 op_code;
+        SdfChildIndicesBlock op_specific;
+        SdfBoundingBoxBlock  bbox;
+    };
+
+    layout(std430, binding = 2) buffer SdfTree {
+        SdfOperationBlock SdfTree[];
+    };
+
+    float bbox_minbound(in mat4 full_inverse, in vec4 scale, in vec4 point) {
+        vec4 trans = full_inverse * point;
+        vec4 q_local = (abs(trans) - vec4(1.0)) * scale;
+        return length(max(q_local, 0.0)) + min(max(q_local.x, max(q_local.y, q_local.z)), 0.0);
+    }
+
+    float bbox_maxbound(in mat4 matrix, in vec4 point) {
+        return max(
+            length((matrix * vec4(1.0, 1.0, 1.0, 1.0)) - point),
+            length((matrix * vec4(-1.0, 1.0, 1.0, 1.0)) - point),
+            length((matrix * vec4(1.0, -1.0, 1.0, 1.0)) - point),
+            length((matrix * vec4(-1.0, -1.0, 1.0, 1.0)) - point),
+            length((matrix * vec4(1.0, 1.0, -1.0, 1.0)) - point),
+            length((matrix * vec4(-1.0, 1.0, -1.0, 1.0)) - point),
+            length((matrix * vec4(1.0, -1.0, -1.0, 1.0)) - point),
+            length((matrix * vec4(-1.0, -1.0, -1.0, 1.0)) - point)
+        );
+    }
+
+    float nearest_neighbor(in vec4 point) {
+        uint stack[100];
+        uint stack_pointer = 0;
+        stack[stack_pointer] = 0;
+        float current_nearest = 1.0 / 0.0;
+        while (stack_pointer >= 0) { 
+            SdfOperationBlock operation = SdfTree[stack[stack_pointer]];
+            float left_minbound =
+            float left_maxbound = bbox_maxbound(operation.matrix, point);
+            float right_minbound = bbox_minbound(operation.full_inverse, operation.scale, point);
+            if 
+            if (left_maxbound < right_minbound) {
+                
+            }
+        }
+    }
+    */
+
     pub fn nearest_neighbor(&self, point: Vec3) -> NnResult {
         if self.is_primitive() {
             NnResult {
                 node: self,
-                distance: self.intern.distance_to(self.bbox.unwrap().in_box_basis(point.extend(1.0)).truncate()),
+                distance: self.intern.distance_to(
+                    self.bbox.unwrap().in_box_trans_basis(point.extend(1.0)).truncate()
+                ),
             }
         } else {
             let mut min_maxbounds = self.slots.iter()
-                .map(|(_, node)| node.bbox_dist_info(point))
-                .collect::<Vec<NodeDistInfo>>();
+                .map(|(i, node)| (i, node.bbox_dist_info(point)))
+                .collect::<Vec<(usize, NodeDistInfo)>>();
             let min_maxbound_dist = min_maxbounds.iter()
-                .map(|dist_info| CmpFloat(dist_info.max_bound))
+                .map(|dist_info| CmpFloat(dist_info.1.max_bound))
                 .min().unwrap().0;
-                // println!("min maxbound: {}", min_maxbound_dist);
-            min_maxbounds.sort_unstable_by_key(|dist_info| CmpFloat(dist_info.min_bound));
-            // println!("closest_centroid: {}, min: {}", min_centroids[0].centroid_dist, min_centroids[0].minimum_dist);
-            self.slots.iter()
-                // Downwards pruning
-                // .take_while(|(i, _)| min_maxbounds[*i].min_bound < min_maxbound_dist)
+            min_maxbounds.sort_unstable_by_key(|dist_info| CmpFloat(dist_info.1.min_bound));
+            min_maxbounds.iter()
+                .take_while(|(_, dist_info)| dist_info.min_bound < min_maxbound_dist)
+                .map(|(i, dist_info)| (self.slots.get(*i).unwrap(), dist_info))
                 .fold(
                     NnResult {
                         node: self,
                         distance: f32::INFINITY,
                     },
-                    |acc, (i, node)| {
-                        // Upwards pruning
-                        // if min_maxbounds[i].min_bound >= acc.distance {
-                        //     acc
-                        // } else {
+                    |acc, (node, dist_info)| {
+                        if dist_info.min_bound >= acc.distance {
+                            acc
+                        } else {
                             let child_nn = node.nearest_neighbor(node.downtree(point));
                             if child_nn.distance < acc.distance {
                                 child_nn
                             } else {
                                 acc
                             }
-                        // }
+                        }
                     }
                 )
         }
@@ -236,42 +301,46 @@ impl SdfNode {
 }
 
 pub struct SdfElementInfo {
-    pub num_slots: usize,
+    pub num_acc_slots: usize,
+    pub num_drawn_slots: usize,
     pub is_primitive: bool,
     pub op_id: u32,
     pub is_union: bool,
-    pub min_slots: usize,
 }
 
 impl SdfElementInfo {
     pub fn primitive_info(op_id: u32) -> Self {
         SdfElementInfo {
-            num_slots: 0,
+            num_acc_slots: 0,
+            num_drawn_slots: 0,
             is_primitive: true,
             op_id,
             is_union: false,
-            min_slots: 0,
         }
     }
 
-    pub fn strict_info(op_id: u32, num_slots: usize) -> Self {
+    pub fn strict_info(op_id: u32, num_acc_slots: usize, num_drawn_slots: usize) -> Self {
         SdfElementInfo {
-            num_slots,
+            num_acc_slots,
+            num_drawn_slots,
             is_primitive: false,
             op_id,
             is_union: false,
-            min_slots: num_slots,
         }
     }
 
     pub fn union_info(op_id: u32) -> Self {
         SdfElementInfo {
-            num_slots: usize::MAX,
+            num_acc_slots: 0,
+            num_drawn_slots: usize::MAX,
             is_primitive: false,
             op_id,
             is_union: true,
-            min_slots: 1,
         }
+    }
+
+    pub fn num_slots(&self) -> usize {
+        self.num_acc_slots + self.num_drawn_slots
     }
 }
 
@@ -408,7 +477,7 @@ pub struct SdfCaaClone {
 
 impl SdfElement for SdfCaaClone {
     fn get_info(&self) -> SdfElementInfo {
-        SdfElementInfo::strict_info(3, 1)
+        SdfElementInfo::strict_info(3, 0, 1)
     }
 
     fn get_bbox_from_slots(&self, _slots_bboxes: &[SdfBoundingBox]) -> SdfBoundingBox {
@@ -440,7 +509,7 @@ pub struct SdfSurfaceSin {
 
 impl SdfElement for SdfSurfaceSin {
     fn get_info(&self) -> SdfElementInfo {
-        SdfElementInfo::strict_info(4, 1)
+        SdfElementInfo::strict_info(4, 0, 1)
     }
 
     fn get_bbox_from_slots(&self, slots_bboxes: &[SdfBoundingBox]) -> SdfBoundingBox {

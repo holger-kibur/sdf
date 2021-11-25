@@ -4,6 +4,7 @@ use nalgebra::{
     Vector4, matrix
 };
 use raymarch::sdf::fields::*;
+use raymarch::sdf::component::*;
 use std::time::{Duration, Instant};
 use bevy::prelude::*;
 use rand::prelude::*;
@@ -41,7 +42,7 @@ fn main() {
             smooth_radius: 0.0,
         }
     );
-    for _ in 0..10000 {
+    for _ in 0..2 {
         sdf = sdf.with(
             SdfBuilder::primitive(
                 SdfSphere {
@@ -62,4 +63,8 @@ fn main() {
     let second_start = Instant::now();
     println!("{}", sdf_comp_expand.nearest_neighbor(Vec3::new(0.0, 0.0, 0.0)).distance);
     println!("second: {:?}", second_start.elapsed());
+    let buf: SdfTreeBuffer = (&sdf_comp_expand).into();
+    for x in buf.op_buffer.iter() {
+        print!("{:#?}", x);
+    }
 }

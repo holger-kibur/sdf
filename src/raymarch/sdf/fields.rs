@@ -6,6 +6,7 @@ use bevy::{
     prelude::*,
 };
 use super::obb::*;
+use super::component::*;
 
 pub struct NnResult<'a> {
     pub node: &'a SdfNode,
@@ -15,6 +16,48 @@ pub struct NnResult<'a> {
 pub struct NodeDistInfo {
     pub min_bound: f32,
     pub max_bound: f32,
+}
+
+pub struct ExpandedSdfNode {
+    root: SdfNode
+}
+
+impl ExpandedSdfNode {
+    pub fn make_buffer(&self) -> SdfTreeBuffer {
+        let mut op_buffer: Vec<SdfOperationBlock> = Vec::new();
+        let mut queue: VecDeque<&SdfNode> = VecDeque::new();
+        let mut tree_index: u32 = 0;
+        queue.push_back(&self.root);
+        while !queue.is_empty() {
+            let front = queue.pop_front().unwrap();
+            let intern_info = front.intern.get_info();
+            let (left_child, right_child) = {
+                if intern_info.is_primitive | front.is_empty() {
+                    (0, 0)
+                } else {
+                    queue.push_back(front.slots.get(0).unwrap());
+                    queue.push_back(front.slots.get(1).unwrap());
+                    tree_index += 1;
+                    (2 * tree_index - 1, 2 * tree_index)
+                }
+            };
+            op_buffer.push(SdfOperationBlock {
+                op_code: intern_info.op_id,
+                is_primitive: intern_info.is_primitive,
+                op_specific: front.intern.get_specific_block(),
+                bounding_box: front.bbox.unwrap().get_bbox_block(),
+                left_child,
+                right_child,
+            });
+        }
+        SdfTreeBuffer {
+            op_buffer
+        }
+    }
+
+    pub fn nearest_neighbor_naive(&self, point: Vec3) -> NnResult {
+        self.root.nearest_neighbor(point)
+    }
 }
 
 pub struct SdfNode {
@@ -37,6 +80,17 @@ impl SdfNode {
         }
     }
 
+    pub fn empty() -> Self {
+        SdfNode {
+            slots: StableVec::with_capacity(0),
+            intern: Box::new(SdfUnion {
+                smooth_radius: 0.0,
+            }),
+            bbox: Some(SdfBoundingBox::zero()),
+            expanded: true,
+        }
+    }
+
     pub fn set_slot(&mut self, child_node: SdfNode) -> Result<(), &'static str> {
         let intern_info = self.intern.get_info();
         if intern_info.is_primitive {
@@ -51,7 +105,7 @@ impl SdfNode {
 
     pub fn calc_bbox_assign(&mut self) -> SdfBoundingBox {
         assert!(
-            self.intern.get_info().is_union &
+            self.intern.get_info().is_union |
             (0..self.intern.get_info().num_slots()).all(|ind| self.slots.has_element_at(ind)),
             "Tried calculating bounding box of SDF node without all required slots filled!"    
         );
@@ -79,76 +133,101 @@ impl SdfNode {
         self.bbox.is_some()
     }
 
+    pub fn is_expanded(&self) -> bool {
+        (self.slots.num_elements() == 0)
+        || (
+            self.expanded
+            && self.slots.get(0).unwrap().is_expanded()
+            && self.slots.get(1).unwrap().is_expanded()
+        )
+    }
+
     pub fn is_primitive(&self) -> bool {
         self.intern.get_info().is_primitive
     }
 
-    pub fn get_tree_expansion(&self) -> SdfNode {
-        self.full_clone().tree_expand()
+    pub fn is_empty(&self) -> bool {
+        self.slots.num_elements() == 0
+    }
+
+    pub fn get_tree_expansion(&self) -> ExpandedSdfNode {
+        ExpandedSdfNode {
+            root: self.full_clone().tree_expand(),
+        }
     }
 
     fn tree_expand(&mut self) -> SdfNode {
         assert!(self.is_finished(), "Tried expanding an unfinished SDF node!");
         let intern_info = self.intern.get_info();
-        if intern_info.is_union {
-            if self.slots.num_elements() >= 2 {
-                let (left_child_inds, right_child_inds) = self.bbox.unwrap().split(
-                    &self.slots.iter_mut()
-                        .map(|(_, child)| child.calc_bbox_assign())
-                        .collect::<Vec<SdfBoundingBox>>()
-                        .as_slice()
-                );
-                let mut left_children: StableVec<SdfNode> = left_child_inds.iter().map(|child_ind| self.slots.remove(*child_ind).unwrap()).collect();
-                let mut right_children: StableVec<SdfNode> = right_child_inds.iter().map(|child_ind| self.slots.remove(*child_ind).unwrap()).collect();
-                if left_children.num_elements() == 1 && right_children.num_elements() == 1 {
-                    SdfNode {
-                        slots: {
-                            let mut div_slots: StableVec<SdfNode> = StableVec::with_capacity(2);
-                            div_slots.push(left_children.remove_first().unwrap().tree_expand());
-                            div_slots.push(right_children.remove_first().unwrap().tree_expand());
-                            div_slots
-                        },
-                        intern: self.intern.clone(),
-                        bbox: self.bbox,
-                        expanded: true,
+        let div_slots = {
+            let mut div_slots: StableVec<SdfNode> = StableVec::with_capacity(2);
+            if intern_info.is_union {
+                if self.slots.num_elements() >= 2 {
+                    let (left_child_inds, right_child_inds) = self.bbox.unwrap().split(
+                        &self.slots.iter_mut()
+                            .map(|(_, child)| child.calc_bbox_assign())
+                            .collect::<Vec<SdfBoundingBox>>()
+                            .as_slice()
+                    );
+                    let mut left_children: StableVec<SdfNode> = left_child_inds.iter().map(|child_ind| self.slots.remove(*child_ind).unwrap()).collect();
+                    let mut right_children: StableVec<SdfNode> = right_child_inds.iter().map(|child_ind| self.slots.remove(*child_ind).unwrap()).collect();
+                    if left_children.num_elements() == 1 && right_children.num_elements() == 1 {
+                        div_slots.push(left_children.remove_first().unwrap().tree_expand());
+                        div_slots.push(right_children.remove_first().unwrap().tree_expand());
+                        div_slots
+                    } else {
+                        div_slots.push(
+                            SdfNode {
+                                slots: left_children,
+                                intern: self.intern.clone(),
+                                bbox: None,
+                                expanded: false,
+                            }.box_and_expand()
+                        );
+                        div_slots.push(
+                            SdfNode {
+                                slots: right_children,
+                                intern: self.intern.clone(),
+                                bbox: None,
+                                expanded: false,
+                            }.box_and_expand()
+                        );
+                        div_slots
                     }
+                } else if self.slots.num_elements() == 1 {
+                    return self.slots.remove_first().unwrap().tree_expand();
                 } else {
-                    SdfNode {
-                        slots: {
-                            let mut div_slots: StableVec<SdfNode> = StableVec::with_capacity(2);
-                            div_slots.push(
-                                SdfNode {
-                                    slots: left_children,
-                                    intern: self.intern.clone(),
-                                    bbox: None,
-                                    expanded: false,
-                                }.box_and_expand()
-                            );
-                            div_slots.push(
-                                SdfNode {
-                                    slots: right_children,
-                                    intern: self.intern.clone(),
-                                    bbox: None,
-                                    expanded: false,
-                                }.box_and_expand()
-                            );
-                            div_slots
-                        },
-                        intern: self.intern.clone(),
-                        bbox: self.bbox,
-                        expanded: true,
-                    }
+                    return SdfNode::empty();
                 }
             } else {
-                self.slots.remove_first().unwrap().tree_expand()
+                div_slots.push(
+                    SdfNode {
+                        slots: (0..intern_info.num_acc_slots).map(|i| self.slots.remove(i).unwrap()).collect(),
+                        intern: Box::new(SdfUnion {
+                            smooth_radius: 0.0,
+                        }),
+                        bbox: None,
+                        expanded: false,
+                    }
+                );
+                div_slots.push(
+                    SdfNode {
+                        slots: (intern_info.num_acc_slots..intern_info.num_slots()).map(|i| self.slots.remove(i).unwrap()).collect(),
+                        intern: Box::new(SdfUnion {
+                            smooth_radius: 0.0,
+                        }),
+                        bbox: None,
+                        expanded: false,
+                    }.box_and_expand()
+                );
+                div_slots
             }
-        } else {
-            SdfNode {
-                slots: self.slots.iter_mut().map(|(_, child)| child.tree_expand()).collect(),
-                intern: self.intern.clone(),
-                bbox: self.bbox,
-                expanded: true,
-            }
+        };
+        SdfNode {
+            slots: div_slots,
+            intern: self.intern.clone(),
+            bbox: self.bbox,
+            expanded: true,
         }
     }
 
@@ -246,12 +325,12 @@ impl SdfNode {
         uint stack_pointer = 0;
         stack[stack_pointer] = 0;
         float current_nearest = 1.0 / 0.0;
-        while (stack_pointer >= 0) { 
+        while (stack_pointer >= 0) {
+            SdfOperationBlock left_child = 
             SdfOperationBlock operation = SdfTree[stack[stack_pointer]];
             float left_minbound =
             float left_maxbound = bbox_maxbound(operation.matrix, point);
             float right_minbound = bbox_minbound(operation.full_inverse, operation.scale, point);
-            if 
             if (left_maxbound < right_minbound) {
                 
             }
@@ -382,9 +461,7 @@ impl SdfBuilder {
 
 pub trait SdfElement: fmt::Debug {
     fn get_info(&self) -> SdfElementInfo;
-    // Actual logic
     fn get_bbox_from_slots(&self, slots_bboxes: &[SdfBoundingBox]) -> SdfBoundingBox;
-    // Doesn't have to be implemented for primitives, since they are leaf nodes
     fn downtree_transform(&self, point: Vec3) -> Vec3 {
         point
     }
@@ -392,6 +469,7 @@ pub trait SdfElement: fmt::Debug {
         point.length()
     }
     fn clone(&self) -> Box<dyn SdfElement>;
+    fn get_specific_block(&self) -> SdfOpSpecificBlock;
 }
 
 // Primitives
@@ -419,6 +497,13 @@ impl SdfElement for SdfSphere {
     fn distance_to(&self, point: Vec3) -> f32 {
         point.length() - self.radius
     }
+
+    fn get_specific_block(&self) -> SdfOpSpecificBlock {
+        SdfOpSpecificBlock {
+            vec4s: [Vec4::ZERO, Vec4::ZERO],
+            floats: [self.radius, 0.0],
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -441,6 +526,13 @@ impl SdfElement for SdfBoxFrame {
             dimension: self.dimension,
             thickness: self.thickness,
         })
+    }
+    
+    fn get_specific_block(&self) -> SdfOpSpecificBlock {
+        SdfOpSpecificBlock {
+            vec4s: [self.dimension.extend(0.0), Vec4::ZERO],
+            floats: [self.thickness, 0.0],
+        }
     }
 }
 
@@ -465,6 +557,13 @@ impl SdfElement for SdfUnion {
         Box::new(SdfUnion {
             smooth_radius: self.smooth_radius,
         })
+    }
+
+    fn get_specific_block(&self) -> SdfOpSpecificBlock {
+        SdfOpSpecificBlock {
+            vec4s: [Vec4::ZERO, Vec4::ZERO],
+            floats: [self.smooth_radius, 0.0],
+        }
     }
 }
 
@@ -492,11 +591,19 @@ impl SdfElement for SdfCaaClone {
             lattice_transform.z % self.displacement.z,
         )
     }
+
     fn clone(&self) -> Box<dyn SdfElement> {
         Box::new(SdfCaaClone {
             displacement: self.displacement, 
             bounds: self.bounds,
         })
+    }
+
+    fn get_specific_block(&self) -> SdfOpSpecificBlock {
+        SdfOpSpecificBlock {
+            vec4s: [self.displacement.extend(0.0), self.bounds.extend(0.0)],
+            floats: [0.0, 0.0],
+        }
     }
 }
 
@@ -529,6 +636,13 @@ impl SdfElement for SdfSurfaceSin {
             period: self.period,
             amplitude: self.amplitude,
         })
+    }
+
+    fn get_specific_block(&self) -> SdfOpSpecificBlock {
+        SdfOpSpecificBlock {
+            vec4s: [Vec4::ZERO, Vec4::ZERO],
+            floats: [self.period, self.amplitude],
+        }
     }
 }
 

@@ -8,6 +8,7 @@ use std::{
 };
 use float_cmp::approx_eq;
 use bevy::prelude::*;
+use super::component::*;
 
 const VERT_LIST: [Vector4<f32>; 8] = [
     Vector4::new(1.0, 1.0, 1.0, 1.0),
@@ -48,6 +49,15 @@ fn vec_nalgebra_to_bevy(nalgebra_vec: Vector4<f32>) -> Vec4 {
     // this kind of code B)
     <Vec4 as From<[f32; 4]>>::from(
         nalgebra_vec.iter()
+            .copied()
+            .collect::<Vec<f32>>()
+            .try_into().unwrap()
+    )
+}
+
+fn mat_nalgebra_to_bevy(nalgebra_mat: Matrix4<f32>) -> Mat4 {
+    Mat4::from_cols_array(
+        &nalgebra_mat.iter()
             .copied()
             .collect::<Vec<f32>>()
             .try_into().unwrap()
@@ -101,6 +111,9 @@ impl SdfBoundingBox {
 
     #[allow(clippy::map_clone)]
     pub fn merge(sub_boxes: &[Self]) -> Self {
+        if sub_boxes.len() == 0 {
+            return SdfBoundingBox::zero();
+        }
         // Build a matrix from all box vertices
         let mut vert_mat = Matrix4xX::from_iterator(
             sub_boxes.len() * 8,
@@ -221,12 +234,7 @@ impl SdfBoundingBox {
     }
 
     pub fn get_transform(&self) -> Transform {
-        Transform::from_matrix(Mat4::from_cols_array(
-            &self.matrix.iter()
-                .copied()
-                .collect::<Vec<f32>>()
-                .try_into().unwrap()
-        ))
+        Transform::from_matrix(mat_nalgebra_to_bevy(self.matrix))
     }
 
     pub fn in_box_basis(&self, point: Vec4) -> Vec4 {
@@ -273,5 +281,14 @@ impl SdfBoundingBox {
 
     pub fn contains(&self, point: Vec3) -> bool {
         self.full_inverse.transform_point(&Point::from_slice(point.as_ref())).coords.amax() <= 1.0
+    }
+
+    pub fn get_bbox_block(&self) -> SdfBoundingBoxBlock {
+        SdfBoundingBoxBlock {
+            matrix: mat_nalgebra_to_bevy(self.matrix),
+            scale: vec_nalgebra_to_bevy(self.scale),
+            full_inverse: mat_nalgebra_to_bevy(self.full_inverse),
+            trans_inverse: mat_nalgebra_to_bevy(self.trans_inverse),
+        }
     }
 }

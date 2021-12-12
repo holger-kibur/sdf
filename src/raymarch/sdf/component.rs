@@ -29,22 +29,24 @@ impl SdfOpSpecificBlock {
 pub struct SdfOperationBlock {
     pub op_code: u32,
     pub is_primitive: bool,
-    pub is_union: bool,
+    pub level: u32,
+    pub left_child_len: u32,
+    pub right_child_len: u32,
+    pub union_block: SdfOpSpecificBlock,
     pub op_specific: SdfOpSpecificBlock,
     pub bounding_box: SdfBoundingBoxBlock,
-    pub left_child: u32,
-    pub right_child: u32,
 }
 
 impl SdfOperationBlock {
     pub const ZERO: SdfOperationBlock = SdfOperationBlock {
         op_code: 0,
         is_primitive: false,
-        is_union: false,
+        level: 0,
+        left_child_len: 0,
+        right_child_len: 0,
+        union_block: SdfOpSpecificBlock::ZERO,
         op_specific: SdfOpSpecificBlock::ZERO,
         bounding_box: SdfBoundingBoxBlock::ZERO,
-        left_child: 0,
-        right_child: 0,
     };
 }
 

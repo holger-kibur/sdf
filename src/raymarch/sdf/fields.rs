@@ -25,31 +25,46 @@ pub struct ExpandedSdfNode {
 impl ExpandedSdfNode {
     pub fn make_buffer(&self) -> SdfTreeBuffer {
         let mut op_buffer: Vec<SdfOperationBlock> = Vec::new();
-        let mut queue: VecDeque<&SdfNode> = VecDeque::new();
-        let mut tree_index: u32 = 0;
-        queue.push_back(&self.root);
-        while !queue.is_empty() {
-            let front = queue.pop_front().unwrap();
-            let intern_info = front.intern.get_info();
-            let (left_child, right_child) = {
-                if intern_info.is_primitive | front.is_empty() {
-                    (0, 0)
-                } else {
-                    queue.push_back(front.slots.get(0).unwrap());
-                    queue.push_back(front.slots.get(1).unwrap());
-                    tree_index += 1;
-                    (2 * tree_index - 1, 2 * tree_index)
-                }
+
+        fn recurse(buffer: &mut Vec<SdfOperationBlock>, root: &SdfNode, level: u32) {
+            let intern_info = root.intern.get_info();
+            let (union_block, op_specific) = match (intern_info.is_union, intern_info.is_primitive) {
+                (true, false) => (root.intern.get_specific_block(), SdfOpSpecificBlock::ZERO),
+                (false, false) => (root.slots[1].intern.get_specific_block(), root.intern.get_specific_block()),
+                (false, true) => (SdfOpSpecificBlock::ZERO, root.intern.get_specific_block()),
             };
-            op_buffer.push(SdfOperationBlock {
+            let this_ind = buffer.len();
+            let right_child_len = 0;
+            let left_child_len = 0;
+            buffer.push(SdfOperationBlock {
                 op_code: intern_info.op_id,
                 is_primitive: intern_info.is_primitive,
-                op_specific: front.intern.get_specific_block(),
-                bounding_box: front.bbox.unwrap().get_bbox_block(),
-                left_child,
-                right_child,
+                level,
+                left_child_len: 0,
+                right_child_len: 0,
+                union_block,
+                op_specific,
+                bounding_box: root.bbox.unwrap().get_bbox_block(),
             });
+            let rec_root = {
+                if intern_info.is_primitive {
+                    return;
+                } else if !intern_info.is_union {
+                    root.slots.get(1).unwrap()
+                } else {
+                    root
+                }
+            };
+            recurse(buffer, rec_root.slots.get(1).unwrap(), level + 1);
+            right_child_len = buffer.len() - this_ind - 1;
+            recurse(buffer, rec_root.slots.get(0).unwrap(), level + 1);
+            left_child_len = buffer.len() - right_child_len - this_ind - 1;
+            buffer[this_ind].right_child_len = right_child_len as u32;
+            buffer[this_ind].left_child_len = left_child_len as u32;
         }
+
+        recurse(&mut op_buffer, &self.root, 0);
+
         SdfTreeBuffer {
             op_buffer
         }

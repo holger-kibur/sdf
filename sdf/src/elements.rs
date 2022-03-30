@@ -1,7 +1,7 @@
 use std::fmt;
 use bevy::prelude::*;
 use super::{
-    fields::*, 
+    node::*, 
     obb::*,
     component::*,
 };
@@ -95,7 +95,7 @@ impl SdfElement for SdfSphere {
     fn get_bbox(&self, _slots_bboxes: &[SdfBoundingBox]) -> SdfBoundingBox {
         SdfBoundingBox::from_transform(Transform::from_scale(Vec3::splat(self.radius)))
     }
-    
+
     fn clone(&self) -> Box<dyn SdfElement> {
         Box::new(SdfSphere {
             radius: self.radius

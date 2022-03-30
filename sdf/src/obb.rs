@@ -10,8 +10,6 @@ use float_cmp::approx_eq;
 use bevy::prelude::*;
 use super::component::*;
 
-struct Vertex(Vec4);
-
 const VERT_LIST: [Vector4<f32>; 8] = [
     Vector4::new(1.0, 1.0, 1.0, 1.0),
     Vector4::new(-1.0, 1.0, 1.0, 1.0),
@@ -215,11 +213,9 @@ impl SdfBoundingBox {
         (left_side, inds)
     }
 
-    pub fn verts(&self) -> Vec<Vertex> {
+    pub fn verts(&self) -> Vec<Vec4> {
         VERT_LIST.iter()
-            .map(|vert| Vertex(
-                vec_nalgebra_to_bevy(self.matrix * vert)
-            ))
+            .map(|vert| vec_nalgebra_to_bevy(self.matrix * vert))
             .collect()
     }
 

@@ -8,5 +8,5 @@ edition = "2021"
 [dependencies]
 float-cmp = "0.9.0"
 nalgebra = "0.27.1"
-glam = "0.20.2"
+bevy = "0.6"
 rand = "0.8"

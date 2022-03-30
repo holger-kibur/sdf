@@ -1,2 +1,4 @@
-/target
-/sdf/target
+/target/
+/sdf/target/
+Cargo.lock
+/sdf/Cargo.lock

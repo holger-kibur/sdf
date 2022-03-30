@@ -1,6 +1,6 @@
 use std::ops::Range;
 use std::collections::VecDeque;
-use glam::prelude::*;
+use bevy::prelude::*;
 use super::{
     obb::*,
     component::*,
@@ -145,7 +145,7 @@ pub struct SdfNode {
 }
 
 impl SdfNode {
-    pub fn new<T: SdfElement + 'static>(intern: T) -> Self {
+    pub fn new(intern: Box<dyn SdfElement>) -> Self {
         SdfNode {
             slots: Vec::with_capacity(usize::min(
                 intern.get_info().num_slots(),
@@ -374,19 +374,28 @@ pub struct SdfBuilder {
 }
 
 impl SdfBuilder {
-    pub fn primitive<T: SdfElement + 'static>(prim: T) -> Self {
+    pub fn dyn_primitive(prim: Box<dyn SdfElement>) -> Self {
         assert!(prim.get_info().is_primitive);
         SdfBuilder {
             root: SdfNode::new(prim)
         }
     }
 
-    pub fn operation<T: SdfElement + 'static>(self, op: T) -> Self {
+    pub fn primitive<T: SdfElement + 'static>(prim: T) -> Self {
+        Self::dyn_primitive(Box::new(prim))
+    }
+
+    pub fn dyn_operation(self, op: Box<dyn SdfElement>) -> Self {
+        assert!(!op.get_info().is_primitive);
         let mut new_node = SdfNode::new(op);
         new_node.set_slot(self.root).expect("Couldn't set operation child");
         SdfBuilder {
             root: new_node
         }
+    }
+
+    pub fn operation<T: SdfElement + 'static>(self, op: T) -> Self {
+        self.dyn_operation(Box::new(op))
     }
 
     pub fn with(mut self, node: SdfBuilder) -> Self {
@@ -407,28 +416,63 @@ impl SdfBuilder {
 
 #[cfg(test)]
 mod tests {
-    use elements::*;
     use rand::prelude::*;
+    use std::f32::consts::{PI, FRAC_PI_2};
+    use bevy::prelude::*;
+    use crate::{
+        node::*,
+        elements::*,
+    };
 
+    #[derive(Debug)]
     struct TestPrimitive {
         pub scale: f32,
+        pub rev_res: u32,
     }
 
     impl SdfElement for TestPrimitive {
         fn get_info(&self) -> SdfElementInfo {
-            SdfElementInfo::primitive_info(0)
+            SdfElementInfo::primitive_info(1)
         }
 
         fn get_bbox(&self, _slots_bboxes: &[SdfBoundingBox]) -> SdfBoundingBox {
-            
+            SdfBoundingBox::from_transform(Transform::from_scale(Vec3::splat(self.scale)))
+        }
+        
+        fn clone(&self) -> Box<dyn SdfElement> {
+            Box::new(TestPrimitive {
+                scale: self.scale,
+                rev_res: self.rev_res,
+            })
+        }
+
+        fn distance_to(&self, point: Vec3) -> f32 {
+            let res_fl = self.rev_res as f32;
+            let azimuth = f32::atan2(point.z, point.x) + PI;
+            let zenith = f32::atan(point.y / f32::sqrt(point.x * point.x + point.y * point.y)) + FRAC_PI_2;
+            let azimuth_quant = (azimuth * res_fl / (2.0 * PI)).trunc();
+            let zenith_quant = (zenith * (res_fl / 2.0) / PI).trunc();
+            let paired = zenith_quant * res_fl + azimuth_quant;
+            point.length() - paired / (res_fl * res_fl / 2.0) * self.scale
+        }
+
+        fn get_dt_specific_block(&self) -> SdfOpSpecificBlock {
+            let mut ret = SdfOpSpecificBlock::ZERO;
+            ret.floats[0] = self.scale;
+            ret.floats[1] = self.rev_res as f32;
+            ret
+        }
+
+        fn expand(&self, this_node: &SdfNode) -> ExpandedSdfNode {
+            ExpandedSdfNode::primitive(this_node.bbox.unwrap(), self.clone())
         }
     }
 
     fn get_random_transforms(count: u32) -> Vec<Transform> {
         let mut rng = thread_rng();
-        (0..count).iter()
+        (0..count)
             .map(|_| {
-                if (rng.gen::<bool>()) {
+                if rng.gen::<bool>() {
                     Transform::from_translation(Vec3::new(
                         rng.gen_range(-50.0..50.0),
                         rng.gen_range(-50.0..50.0),
@@ -446,8 +490,108 @@ mod tests {
             .collect()
     }
 
+    fn do_dense_nn_single(prim: Box<dyn SdfElement>) {
+        let mut rng = thread_rng();
+        let tlate_trans = Transform::from_translation(Vec3::new(
+            rng.gen_range(-50.0..50.0),
+            rng.gen_range(-50.0..50.0),
+            rng.gen_range(-50.0..50.0),
+        ));
+        let rot_trans = Transform::from_rotation(Quat::from_euler(
+            EulerRot::XYZ,
+            rng.gen_range(0.0..(2.0 * PI)),
+            rng.gen_range(0.0..(2.0 * PI)),
+            rng.gen_range(0.0..(2.0 * PI)),
+        ));
+        let point = Vec3::new(
+            rng.gen_range(-50.0..50.0),
+            rng.gen_range(-50.0..50.0),
+            rng.gen_range(-50.0..50.0),
+        );
+
+        println!("Simple Transform Test Debug:")
+        println!("Sample Point: {}", point);
+        println!("Translation Matrix: {}", tlate_trans.compute_matrix());
+        println!("Rotation Matrix: {}", rot_trans.compute_matrix());
+
+        let gt_tlate = tlate_trans * point;
+        let gt_rot = rot_trans * point;
+        let gt_tlate_rot = rot_trans * tlate_trans * point;
+        let gt_rot_tlate = tlate_trans * rot_trans * point;
+
+        println!("Translation Ground Truth: {}", gt_tlate);
+        println!("Rotation Ground Truth: {}", gt_rot);
+        println!("Translation->Rotation Truth: {}", gt_tlate_rot);
+        println!("Rotation->Translation Ground Truth: {}", gt_rot_tlate);
+
+        let tree_tlate = SdfBuilder::dyn_primitive(prim.clone())
+            .transform(tlate_trans)
+            .finalize();
+        let tree_rot = SdfBuilder::dyn_primitive(prim.clone())
+            .transform(rot_trans)
+            .finalize();
+        let tree_tlate_rot
+    }
+
+    fn test_dense_nn_single_uni() {
+        let prim = SdfSphere {
+            radius: 1.0,
+        };
+        let mut rng = thread_rng();
+        let tlate_trans = Transform::from_translation(Vec3::new(
+            rng.gen_range(-50.0..50.0),
+            rng.gen_range(-50.0..50.0),
+            rng.gen_range(-50.0..50.0),
+        ));
+        let rot_trans = Transform::from_rotation(Quat::from_euler(
+            EulerRot::XYZ,
+            rng.gen_range(0.0..(2.0 * PI)),
+            rng.gen_range(0.0..(2.0 * PI)),
+            rng.gen_range(0.0..(2.0 * PI)),
+        ));
+        let point = Vec3::new(
+            rng.gen_range(-50.0..50.0),
+            rng.gen_range(-50.0..50.0),
+            rng.gen_range(-50.0..50.0),
+        );
+        let point_translated = 
+    }
+
     #[test]
     fn test_dense_nn_transform_chain() {
-        
+        let prim = TestPrimitive {
+            scale: 10.0,
+            rev_res: 64,
+        };
+        let trans_chain = get_random_transforms(1);
+        let point = Vec3::new(
+            thread_rng().gen_range(-50.0..50.0),
+            thread_rng().gen_range(-50.0..50.0),
+            thread_rng().gen_range(-50.0..50.0),
+        );
+        let gt_point = trans_chain.iter()
+            .fold(
+                point,
+                |accum, trans| trans.mul_vec3(accum)
+            );
+        let sdf_tree = trans_chain.iter()
+            .rev()
+            .fold(
+                SdfBuilder::primitive(TestPrimitive {
+                    scale: prim.scale,
+                    rev_res: prim.rev_res,
+                }),
+                |accum, trans| {
+                    accum.transform(*trans).operation(SdfUnion {
+                        smooth_radius: 0.0,
+                    })
+                }
+            )
+            .finalize();
+
+        let ground_truth = prim.distance_to(gt_point);
+        let dense_tree_nn = sdf_tree.nearest_neighbor(point).distance;
+        assert!(float_cmp::approx_eq!(f32, ground_truth, dense_tree_nn, ulps = 2),
+            "Ground Truth: {}, NN Result: {}!", ground_truth, dense_tree_nn);
     }
 }

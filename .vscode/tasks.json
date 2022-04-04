@@ -9,6 +9,24 @@
 			],
 			"group": "build",
 			"label": "Rust: cargo build - gam"
-		}
-	]
+		},
+		{
+			"type": "shell",
+			"command": "python ${workspaceRoot}/sdf/proc_test.py ${workspaceRoot}/sdf/dbg_utest.exe",
+			"options": {
+				"cwd": "${workspaceRoot}/sdf"
+			},
+			"group": "test",
+			"label": "Build SDF Tests"
+		},
+		{
+			"type": "shell",
+			"command": "del dbg_utest.exe dbg_utest.pdb",
+			"options": {
+				"cwd": "${workspaceRoot}/sdf"
+			},
+			"group": "test",
+			"label": "Cleanup SDF Tests"
+		},
+	],
 }

@@ -335,7 +335,6 @@ impl SdfNode {
                 distance: self.intern.distance_to(self.bbox.unwrap().in_box_trans_basis(point.extend(1.0)).truncate()),
             };
         }
-
         let mut bounds = self.slots.iter()
             .enumerate()
             .map(|(i, node)| (i, node.bbox_dist_info(point)))
@@ -414,7 +413,7 @@ impl SdfBuilder {
     }
 }
 
-#[cfg(test]
+#[cfg(test)]
 pub mod tests {
     use rand::prelude::*;
     use std::f32::consts::{PI, FRAC_PI_2, SQRT_2};
@@ -587,17 +586,28 @@ pub mod tests {
             rng.gen_range(-50.0..50.0),
             rng.gen_range(-50.0..50.0),
         );
-        let trans_vec = get_random_transforms(10);
-        let trans_inv_vec = trans_vec.iter()
+        let trans_vec = get_random_transforms(1);
+        let final_inv = trans_vec.iter()
             .map(|trans| trans.compute_matrix().inverse())
-            .collect();
+            .fold(Mat4::IDENTITY, |acc, mat| acc * mat);
+        let ground_truth = prim.distance_to((final_inv * point.extend(1.0)).truncate());
+        let sdf_tree = trans_vec.iter()
+            .fold(
+                SdfBuilder::dyn_primitive(prim),
+                |acc, trans| acc.transform(*trans).operation(SdfUnion {
+                    smooth_radius: 0.0,
+                })
+            )
+            .finalize();
+        let nn_result = sdf_tree.nearest_neighbor(point).distance;
+        assert!(approx_eq!(f32, ground_truth, nn_result),
+            "Transform Chain Failed! Ground Truth: {}, NN Result: {}", ground_truth, nn_result);
     }
 
     /**
      * Run a sanity test for whether TestPrimitive actually works as intended.
      * 
      * This test is never expected to break or fail; it has no reliance on the rest of the library.
-     * 
      */
     #[test]
     fn sanity_dir_depend_prim() {
@@ -629,41 +639,20 @@ pub mod tests {
         do_dense_nn_single(Box::new(prim));
     }
 
-    // #[test]
-    // fn test_dense_nn_transform_chain() {
-    //     let prim = TestPrimitive {
-    //         scale: 10.0,
-    //         rev_res: 64,
-    //     };
-    //     let trans_chain = get_random_transforms(1);
-    //     let point = Vec3::new(
-    //         thread_rng().gen_range(-50.0..50.0),
-    //         thread_rng().gen_range(-50.0..50.0),
-    //         thread_rng().gen_range(-50.0..50.0),
-    //     );
-    //     let gt_point = trans_chain.iter()
-    //         .fold(
-    //             point,
-    //             |accum, trans| trans.mul_vec3(accum)
-    //         );
-    //     let sdf_tree = trans_chain.iter()
-    //         .rev()
-    //         .fold(
-    //             SdfBuilder::primitive(TestPrimitive {
-    //                 scale: prim.scale,
-    //                 max_dev: prim.max,
-    //             }),
-    //             |accum, trans| {
-    //                 accum.transform(*trans).operation(SdfUnion {
-    //                     smooth_radius: 0.0,
-    //                 })
-    //             }
-    //         )
-    //         .finalize();
+    #[test]
+    fn test_dense_nn_chain_uni() {
+        let prim = SdfSphere {
+            radius: 1.0,
+        };
+        do_dense_nn_chain(Box::new(prim));
+    }
 
-    //     let ground_truth = prim.distance_to(gt_point);
-    //     let dense_tree_nn = sdf_tree.nearest_neighbor(point).distance;
-    //     assert!(float_cmp::approx_eq!(f32, ground_truth, dense_tree_nn, ulps = 2),
-    //         "Ground Truth: {}, NN Result: {}!", ground_truth, dense_tree_nn);
-    // }
+    #[test]
+    fn test_dense_nn_chain_dir() {
+        let prim = TestPrimitive {
+            scale: 1.0,
+            max_dev: 0.1,
+        };
+        do_dense_nn_chain(Box::new(prim));
+    }
 }

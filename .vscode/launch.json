@@ -14,12 +14,17 @@
             "preLaunchTask": "Rust: cargo build - gam",
         },
         {
-            "name": "(OSX) Launch",
-            "type": "lldb",
+            "name": "Debug SDF Unit Tests",
+            "type": "cppvsdbg",
             "request": "launch",
-            "program": "${workspaceRoot}/target/debug/gam",
+            "program": "${workspaceRoot}/sdf/dbg_utest.exe",
             "args": [],
+            "stopAtEntry": false,
             "cwd": "${workspaceRoot}",
+            "environment": [],
+            "console": "integratedTerminal",
+            "preLaunchTask": "Build SDF Tests",
+            "postDebugTask": "Cleanup SDF Tests",
         }
     ]
 }

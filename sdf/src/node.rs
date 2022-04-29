@@ -80,7 +80,7 @@ impl SdfNode {
 
     pub fn get_sub_boxes(&self) -> Vec<SdfBoundingBox> {
         self.slots.iter()
-            .map(|node| node.bbox.unwrap())
+            .map(|node| node.bbox)
             .filter(|bbox| !bbox.is_zero()) // Filter after bbox calculation so entire tree is initialized
             .collect::<Vec<SdfBoundingBox>>()
     }
@@ -121,7 +121,7 @@ impl SdfNode {
             for child in front.slots.iter() {
                 disp_queue.push_back((level + 1, child));
             }
-            println!("{}: {:?}, slots: {}, matrix: {}", level, front.intern, front.slots.len(), front.bbox.unwrap().scale);
+            println!("{}: {:?}, slots: {}, matrix: {}", level, front.intern, front.slots.len(), front.bbox.scale);
             // front.bbox.unwrap_or(SdfBoundingBox::zero()).get_info()
         }
     }
@@ -131,7 +131,7 @@ impl SdfNode {
             self.is_finished(),
             "Tried testing point-in-bbox on an unfinished SDF node!"
         );
-        self.bbox.unwrap().contains(point)
+        self.bbox.contains(point)
     }
 
     pub fn bbox_dist_info(&self, point: Vec3) -> NodeDistInfo {
@@ -140,8 +140,8 @@ impl SdfNode {
             "Tried getting bounding-box distance info on an unfinished SDF node!"
         );
         NodeDistInfo {
-            min_bound: self.bbox.unwrap().distance_to(point),
-            max_bound: self.bbox.unwrap().max_distance(point)
+            min_bound: self.bbox.distance_to(point),
+            max_bound: self.bbox.max_distance(point)
         }
     }
 
@@ -211,7 +211,7 @@ impl SdfNode {
         if self.is_primitive() {
             return NnResult {
                 node: self,
-                distance: self.intern.distance_to(self.bbox.unwrap().in_box_trans_basis(point.extend(1.0)).truncate()),
+                distance: self.intern.distance_to(self.bbox.in_box_trans_basis(point.extend(1.0)).truncate()),
             };
         }
         let mut bounds = self.slots.iter()
@@ -235,7 +235,7 @@ impl SdfNode {
                         accum
                     } else {
                         let child_nn = node.nearest_neighbor(node.downtree(
-                            self.bbox.unwrap().in_box_trans_basis(point.extend(1.0)).truncate()
+                            self.bbox.in_box_trans_basis(point.extend(1.0)).truncate()
                         ));
                         match child_nn.distance < accum.distance {
                             true => child_nn,
@@ -298,7 +298,7 @@ pub mod tests {
         }
 
         fn expand(&self, this_node: &SdfNode) -> ExpandedSdfNode {
-            ExpandedSdfNode::primitive(this_node.bbox.unwrap(), self.clone())
+            ExpandedSdfNode::primitive(this_node.bbox, self.clone())
         }
     }
 

@@ -1,7 +1,8 @@
 use std::fmt;
 use bevy::prelude::*;
 use super::{
-    node::*, 
+    expanded_node::*, 
+    dense_node::*,
     obb::*,
     component::*,
 };
@@ -113,7 +114,7 @@ impl SdfElement for SdfSphere {
     }
 
     fn expand(&self, this_node: &SdfNode) -> ExpandedSdfNode {
-        ExpandedSdfNode::primitive(this_node.bbox.unwrap(), self.clone())
+        ExpandedSdfNode::primitive(this_node.bbox, self.clone())
     }
 }
 
@@ -147,7 +148,7 @@ impl SdfElement for SdfBoxFrame {
     }
     
     fn expand(&self, this_node: &SdfNode) -> ExpandedSdfNode {
-        ExpandedSdfNode::primitive(this_node.bbox.unwrap(), self.clone())
+        ExpandedSdfNode::primitive(this_node.bbox, self.clone())
     }
 }
 
@@ -179,7 +180,7 @@ impl SdfElement for SdfUnion {
                     }
 
                     let bboxes = index_vec.iter()
-                        .map(|i| this_node.slots[*i].bbox.unwrap())
+                        .map(|i| this_node.slots[*i].bbox)
                         .collect::<Vec<SdfBoundingBox>>();
                     let merged_box = SdfBoundingBox::merge(bboxes.as_slice());
                     let (left_child_inds, right_child_inds) = merged_box.split(bboxes.as_slice());

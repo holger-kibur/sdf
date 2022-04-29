@@ -1,6 +1,5 @@
 use super::{
     obb::*,
-    node::*,
     faux_shader::*,
 };
 use bevy::{

@@ -8,8 +8,8 @@ use bevy::prelude::*;
 use std::collections::VecDeque;
 
 pub struct SdfNode {
-    slots: Vec<SdfNode>,
-    bbox: SdfBoundingBox,
+    pub slots: Vec<SdfNode>,
+    pub bbox: SdfBoundingBox,
     intern: Box<dyn SdfElement>,
 }
 

@@ -25,6 +25,9 @@
             "console": "integratedTerminal",
             "preLaunchTask": "Build SDF Tests",
             "postDebugTask": "Cleanup SDF Tests",
+            "sourceFileMap": {
+                "/rustc/9d1b2106e23b1abd32fce1f17267604a5102f57a": "${env:USERPROFILE}\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\lib\\rustlib\\src\\rust",
+            },
         }
     ]
 }

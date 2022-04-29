@@ -17,127 +17,6 @@ pub struct NodeDistInfo {
     pub max_bound: f32,
 }
 
-pub struct ExpandedSdfNode {
-    expanded_slots: Option<[Box<ExpandedSdfNode>; 2]>,
-    pub bbox: SdfBoundingBox,
-    intern: Option<Box<dyn SdfElement>>,
-}
-
-impl ExpandedSdfNode {
-    pub fn null() -> Self {
-        ExpandedSdfNode {
-            expanded_slots: None,
-            bbox: SdfBoundingBox::zero(),
-            intern: None,
-        }
-    }
-
-    pub fn primitive(bbox: SdfBoundingBox, intern: Box<dyn SdfElement>) -> Self {
-        ExpandedSdfNode {
-            expanded_slots: None,
-            bbox,
-            intern: Some(intern),
-        }
-    }
-
-    pub fn simple_operation(downtree_union: ExpandedSdfNode, intern: Box<dyn SdfElement>) -> Self {
-        ExpandedSdfNode {
-            bbox: downtree_union.bbox,
-            expanded_slots: Some([Box::new(downtree_union), Box::new(Self::null())]),
-            intern: Some(intern),
-        }
-    }
-
-    pub fn operation(expanded_slots: [Box<ExpandedSdfNode>; 2], bbox: SdfBoundingBox, intern: Box<dyn SdfElement>) -> Self {
-        ExpandedSdfNode {
-            expanded_slots: Some(expanded_slots),
-            bbox,
-            intern: Some(intern),
-        }
-    }
-
-    pub fn is_null(&self) -> bool {
-        self.intern.is_none()
-    }
-
-    pub fn is_primitive(&self) -> bool {
-        self.expanded_slots.is_none() && self.intern.is_some()
-    }
-
-    pub fn is_operation(&self) -> bool {
-        self.expanded_slots.is_some() && self.intern.is_some()
-    }
-
-    pub fn is_union(&self) -> bool {
-        self.is_operation() && self.intern.as_ref().unwrap().get_info().is_union
-    }
-
-    pub fn make_buffer(&self) -> SdfTreeBuffer {
-        let mut buffer = SdfTreeBuffer::make_empty();
-
-        fn recurse(
-            buffer: &mut SdfTreeBuffer,
-            root: &ExpandedSdfNode,
-            other_box: &SdfBoundingBox,
-            level: u32,
-            parent_is_union: bool,
-        ) {
-            if root.is_null() {
-                return;
-            }
-
-            let intern = root.intern.as_ref().unwrap();
-            
-            let intern_info = intern.get_info();
-            let dt_block_spec = intern.get_dt_specific_block();
-            let ut_block_spec = intern.get_ut_specific_block();
-            let this_ind = buffer.downtree_buffer.len() as usize;
-
-
-            buffer.downtree_buffer.push(SdfOperationBlock {
-                op_code: intern_info.op_id,
-                is_primitive: intern_info.is_primitive,
-                parent_is_union,
-                len: 0,
-                level,
-                op_specific: dt_block_spec,
-                bounding_box: root.bbox.get_bbox_block(),
-                other_box: other_box.get_bbox_block(),
-            });
-
-            if !root.is_primitive() {
-                let exp_slots = root.expanded_slots.as_ref().unwrap();
-                recurse(
-                    buffer,
-                    &exp_slots[0],
-                    &exp_slots[0].bbox,
-                    level + 1,
-                    root.is_union());
-                recurse(
-                    buffer,
-                    &exp_slots[1],
-                    &exp_slots[1].bbox,
-                    level + 1,
-                    root.is_union());
-            }
-
-            buffer.uptree_buffer.push(SdfOperationUptreeBlock {
-                op_code: intern_info.op_id,
-                parent_is_union,
-                op_specific: ut_block_spec,
-                level,
-            });
-
-            buffer.downtree_buffer[this_ind].len = (buffer.downtree_buffer.len() - this_ind - 1) as u32;
-        }
-
-        let throwaway_box = SdfBoundingBox::zero();
-        recurse(&mut buffer, self, &throwaway_box, 1, false);
-        buffer.buffer_len = buffer.downtree_buffer.len() as u32;
-        buffer
-    }
-}
-
 pub struct SdfNode {
     pub slots: Vec<SdfNode>,
     pub bbox: Option<SdfBoundingBox>,
@@ -368,51 +247,6 @@ impl SdfNode {
     }
 }
 
-pub struct SdfBuilder {
-    root: SdfNode,
-}
-
-impl SdfBuilder {
-    pub fn dyn_primitive(prim: Box<dyn SdfElement>) -> Self {
-        assert!(prim.get_info().is_primitive);
-        SdfBuilder {
-            root: SdfNode::new(prim)
-        }
-    }
-
-    pub fn primitive<T: SdfElement + 'static>(prim: T) -> Self {
-        Self::dyn_primitive(Box::new(prim))
-    }
-
-    pub fn dyn_operation(self, op: Box<dyn SdfElement>) -> Self {
-        assert!(!op.get_info().is_primitive);
-        let mut new_node = SdfNode::new(op);
-        new_node.set_slot(self.root).expect("Couldn't set operation child");
-        SdfBuilder {
-            root: new_node
-        }
-    }
-
-    pub fn operation<T: SdfElement + 'static>(self, op: T) -> Self {
-        self.dyn_operation(Box::new(op))
-    }
-
-    pub fn with(mut self, node: SdfBuilder) -> Self {
-        self.root.set_slot(node.root).expect("Couldn't set operation slot");
-        self
-    }
-
-    pub fn transform(mut self, trans: Transform) -> Self {
-        self.root.bbox = Some(self.root.calc_bbox_assign().apply_transform(trans));
-        self
-    }
-
-    pub fn finalize(mut self) -> SdfNode {
-        self.root.calc_bbox_assign();
-        self.root
-    }
-}
-
 #[cfg(test)]
 pub mod tests {
     use rand::prelude::*;
@@ -587,6 +421,7 @@ pub mod tests {
             rng.gen_range(-50.0..50.0),
         );
         let trans_vec = get_random_transforms(1);
+        println!("{}", trans_vec[0].translation);
         let final_inv = trans_vec.iter()
             .map(|trans| trans.compute_matrix().inverse())
             .fold(Mat4::IDENTITY, |acc, mat| acc * mat);
@@ -644,7 +479,8 @@ pub mod tests {
         let prim = SdfSphere {
             radius: 1.0,
         };
-        do_dense_nn_chain(Box::new(prim));
+        let x = Box::new(prim);
+        do_dense_nn_chain(x);
     }
 
     #[test]

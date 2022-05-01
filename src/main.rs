@@ -1,18 +1,18 @@
-use rand::Rng;
 use bevy::{
-    input::mouse::{MouseWheel, MouseScrollUnit},
     core::Byteable,
+    input::mouse::{MouseScrollUnit, MouseWheel},
     prelude::*,
     reflect::TypeUuid,
     render::{
         camera::Camera,
         mesh::shape,
         pipeline::{PipelineDescriptor, RenderPipeline},
-        render_graph::{base, AssetRenderResourcesNode, RenderResourcesNode, RenderGraph},
+        render_graph::{base, AssetRenderResourcesNode, RenderGraph, RenderResourcesNode},
         renderer::RenderResources,
         shader::{ShaderStage, ShaderStages},
     },
 };
+use rand::Rng;
 
 /// This example illustrates how to create a custom material asset and a shader that uses that
 /// material
@@ -53,7 +53,7 @@ impl SdfBuffer {
         self.sdfs.push(sphere);
         self.num_spheres += 1;
         SdfIndex {
-            index: self.num_spheres - 1
+            index: self.num_spheres - 1,
         }
     }
 }
@@ -62,7 +62,7 @@ impl Default for SdfBuffer {
     fn default() -> Self {
         SdfBuffer {
             num_spheres: 0,
-            sdfs: Vec::new()
+            sdfs: Vec::new(),
         }
     }
 }
@@ -186,10 +186,7 @@ void main() {
 }
 "#;
 
-fn cam_mover(
-    mut cam_dist: ResMut<CameraDist>,
-    mut scroll_evt: EventReader<MouseWheel>,
-) {
+fn cam_mover(mut cam_dist: ResMut<CameraDist>, mut scroll_evt: EventReader<MouseWheel>) {
     for evt in scroll_evt.iter() {
         if let MouseScrollUnit::Line = evt.unit {
             cam_dist.0 -= evt.y;
@@ -227,10 +224,7 @@ fn setup(
 
     // Add an AssetRenderResourcesNode to our Render Graph. This will bind MyMaterial resources to
     // our shader
-    render_graph.add_system_node(
-        "indexes",
-        AssetRenderResourcesNode::<SdfIndex>::new(true),
-    );
+    render_graph.add_system_node("indexes", AssetRenderResourcesNode::<SdfIndex>::new(true));
 
     render_graph.add_system_node(
         "sdf_buffer",
@@ -243,7 +237,9 @@ fn setup(
         .add_node_edge("indexes", base::node::MAIN_PASS)
         .unwrap();
 
-    render_graph.add_node_edge("sdf_buffer", base::node::MAIN_PASS).unwrap();
+    render_graph
+        .add_node_edge("sdf_buffer", base::node::MAIN_PASS)
+        .unwrap();
 
     let new_sdf_handle = buffers.add(SdfBuffer::default());
     let sdf_mut = buffers.get_mut(new_sdf_handle.clone()).unwrap();
@@ -265,16 +261,20 @@ fn setup(
             radius: radius,
         };
         commands
-        .spawn_bundle(MeshBundle {
-            mesh: meshes.add(Mesh::from(shape::Box::new(radius * 0.5_f32, radius * 3_f32, radius * 3_f32))),
-            render_pipelines: RenderPipelines::from_pipelines(vec![RenderPipeline::new(
-                pipeline_handle.clone(),
-            )]),
-            transform: Transform::from_xyz(x, y, z),
-            ..Default::default()
-        })
-        .insert(indexes.add(sdf_mut.insert_sphere(new_sdf)))
-        .insert(new_sdf_handle.clone());
+            .spawn_bundle(MeshBundle {
+                mesh: meshes.add(Mesh::from(shape::Box::new(
+                    radius * 0.5_f32,
+                    radius * 3_f32,
+                    radius * 3_f32,
+                ))),
+                render_pipelines: RenderPipelines::from_pipelines(vec![RenderPipeline::new(
+                    pipeline_handle.clone(),
+                )]),
+                transform: Transform::from_xyz(x, y, z),
+                ..Default::default()
+            })
+            .insert(indexes.add(sdf_mut.insert_sphere(new_sdf)))
+            .insert(new_sdf_handle.clone());
     }
     // camera
     commands.spawn_bundle(PerspectiveCameraBundle {

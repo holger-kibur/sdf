@@ -1,11 +1,5 @@
-use super::{
-    obb::*,
-    faux_shader::*,
-};
-use bevy::{
-    prelude::*,
-    reflect::TypeUuid,
-};
+use super::{faux_shader::*, obb::*};
+use bevy::{prelude::*, reflect::TypeUuid};
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
@@ -21,6 +15,12 @@ impl SdfOpSpecificBlock {
         vec4s: [Vec4::ZERO; 3],
         floats: [0.0; 2],
     };
+}
+
+impl PartialEq for SdfOpSpecificBlock {
+    fn eq(&self, other: &Self) -> bool {
+        self.mat4s == other.mat4s && self.vec4s == other.vec4s && self.floats == other.floats
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

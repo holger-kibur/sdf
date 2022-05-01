@@ -1,14 +1,10 @@
-use nalgebra::{
-    Matrix4, Vector4, matrix, Matrix, Matrix4xX, Point, U1, U4, Scalar, Const,
-    storage::{Storage}
-};
-use std::{
-    convert::TryInto,
-    cmp::Ordering,
-};
-use float_cmp::approx_eq;
-use bevy::prelude::*;
 use super::component::*;
+use bevy::prelude::*;
+use float_cmp::approx_eq;
+use nalgebra::{
+    matrix, storage::Storage, Const, Matrix, Matrix4, Matrix4xX, Point, Scalar, Vector4, U1, U4,
+};
+use std::{cmp::Ordering, convert::TryInto};
 
 const VERT_LIST: [Vector4<f32>; 8] = [
     Vector4::new(1.0, 1.0, 1.0, 1.0),
@@ -21,8 +17,8 @@ const VERT_LIST: [Vector4<f32>; 8] = [
     Vector4::new(-1.0, -1.0, -1.0, 1.0),
 ];
 
-// I'm so done with this floats-can't-be-compared bullshit; I don't care 
-// if it isn't right. 
+// I'm so done with this floats-can't-be-compared bullshit; I don't care
+// if it isn't right.
 #[derive(PartialEq)]
 pub struct CmpFloat(pub f32);
 
@@ -52,24 +48,29 @@ fn vec_nalgebra_to_bevy(nalgebra_vec: Vector4<f32>) -> Vec4 {
     // Fully qualified syntax because I am fully qualified to write
     // this kind of code B)
     <Vec4 as From<[f32; 4]>>::from(
-        nalgebra_vec.iter()
+        nalgebra_vec
+            .iter()
             .copied()
             .collect::<Vec<f32>>()
-            .try_into().unwrap()
+            .try_into()
+            .unwrap(),
     )
 }
 
 fn mat_nalgebra_to_bevy(nalgebra_mat: Matrix4<f32>) -> Mat4 {
     Mat4::from_cols_array(
-        &nalgebra_mat.iter()
+        &nalgebra_mat
+            .iter()
             .copied()
             .collect::<Vec<f32>>()
-            .try_into().unwrap()
+            .try_into()
+            .unwrap(),
     )
 }
 
-pub fn vec_nalgebra_minmax<T>(nalgebra_vec: Matrix<f32, U4, U1, T>) -> Vector4<f32> where 
-    T: Storage<f32, Const<4_usize>>
+pub fn vec_nalgebra_minmax<T>(nalgebra_vec: Matrix<f32, U4, U1, T>) -> Vector4<f32>
+where
+    T: Storage<f32, Const<4_usize>>,
 {
     let mut onehot = [0.0, 0.0, 0.0, 0.0];
     onehot[nalgebra_vec.iamax()] = 1.0;
@@ -121,12 +122,20 @@ impl SdfBoundingBox {
         // Build a matrix from all box vertices
         let mut vert_mat = Matrix4xX::from_iterator(
             sub_boxes.len() * 8,
-            sub_boxes.iter()
-                .map(|sub_box| VERT_LIST.iter()
-                    .map(|vert| (sub_box.matrix * vert).iter()
-                        .copied().collect::<Vec<f32>>())
-                    .flatten())
-                .flatten()
+            sub_boxes
+                .iter()
+                .map(|sub_box| {
+                    VERT_LIST
+                        .iter()
+                        .map(|vert| {
+                            (sub_box.matrix * vert)
+                                .iter()
+                                .copied()
+                                .collect::<Vec<f32>>()
+                        })
+                        .flatten()
+                })
+                .flatten(),
         );
         // Get mean of vertices
         let vert_mean = vert_mat.column_mean();
@@ -140,7 +149,7 @@ impl SdfBoundingBox {
         let covar_mat = (vert_mat * &vert_mat_mean_trans) / ((sub_boxes.len() * 8 - 1) as f32);
         // Get eigenstuff of covariance matrix. Covariance is symmetric so we gucci.
         let eigen_info = covar_mat.symmetric_eigen();
-        // For some reason, symmetric eigen loves to make the W-vector negative sometimes, so we have to set it 
+        // For some reason, symmetric eigen loves to make the W-vector negative sometimes, so we have to set it
         // let sort_transform = Matrix4::from_columns(
         //     eigen_info.eigenvectors.column_iter()
         //         .map(vec_nalgebra_minmax)
@@ -177,9 +186,7 @@ impl SdfBoundingBox {
         SdfBoundingBox {
             matrix: new_bbox_mat,
             scale,
-            full_inverse: new_bbox_mat
-                .try_inverse()
-                .unwrap(),
+            full_inverse: new_bbox_mat.try_inverse().unwrap(),
             trans_inverse: (Matrix4::new_translation(&vert_mean.xyz()) * eigen_basis)
                 .try_inverse()
                 .unwrap(),
@@ -207,14 +214,17 @@ impl SdfBoundingBox {
             }
         };
         // Sort by value of projection along splitting axis
-        inds.sort_unstable_by_key(|sub_box_ind| CmpFloat(sub_boxes[*sub_box_ind].matrix.column(3).dot(&split_axis)));
+        inds.sort_unstable_by_key(|sub_box_ind| {
+            CmpFloat(sub_boxes[*sub_box_ind].matrix.column(3).dot(&split_axis))
+        });
         // Split at median
         let left_side = inds.split_off(inds.len() / 2);
         (left_side, inds)
     }
 
     pub fn verts(&self) -> Vec<Vec4> {
-        VERT_LIST.iter()
+        VERT_LIST
+            .iter()
             .map(|vert| vec_nalgebra_to_bevy(self.matrix * vert))
             .collect()
     }
@@ -226,18 +236,16 @@ impl SdfBoundingBox {
     pub fn apply_transform(self, trans: Transform) -> Self {
         let mut no_scale = trans.clone();
         no_scale.scale = Vec3::new(1.0, 1.0, 1.0);
-        let mat = Matrix4::from_column_slice(
-            &trans.compute_matrix().to_cols_array()
-        ) * self.matrix;
-        let full_inv = self.full_inverse * Matrix4::from_column_slice(
-            &trans.compute_matrix().inverse().to_cols_array()
-        );
-        let trans_inv = self.trans_inverse * Matrix4::from_column_slice(
-            &no_scale.compute_matrix().inverse().to_cols_array()
-        );
+        let mat = Matrix4::from_column_slice(&trans.compute_matrix().to_cols_array()) * self.matrix;
+        let full_inv = self.full_inverse
+            * Matrix4::from_column_slice(&trans.compute_matrix().inverse().to_cols_array());
+        let trans_inv = self.trans_inverse
+            * Matrix4::from_column_slice(&no_scale.compute_matrix().inverse().to_cols_array());
         SdfBoundingBox {
             matrix: mat,
-            scale: self.scale.component_mul(&vec_bevy_to_nalgebra(trans.scale.extend(0.0))),
+            scale: self
+                .scale
+                .component_mul(&vec_bevy_to_nalgebra(trans.scale.extend(0.0))),
             full_inverse: full_inv,
             trans_inverse: trans_inv,
         }
@@ -248,33 +256,23 @@ impl SdfBoundingBox {
     }
 
     pub fn in_box_basis(&self, point: Vec4) -> Vec4 {
-        vec_nalgebra_to_bevy(
-            self.full_inverse * vec_bevy_to_nalgebra(point)
-        )
+        vec_nalgebra_to_bevy(self.full_inverse * vec_bevy_to_nalgebra(point))
     }
 
     pub fn in_box_trans_basis(&self, point: Vec4) -> Vec4 {
-        vec_nalgebra_to_bevy(
-            self.trans_inverse * vec_bevy_to_nalgebra(point)
-        )
+        vec_nalgebra_to_bevy(self.trans_inverse * vec_bevy_to_nalgebra(point))
     }
 
     pub fn in_parent_basis(&self, point: Vec4) -> Vec4 {
-        vec_nalgebra_to_bevy(
-            self.matrix * vec_bevy_to_nalgebra(point)
-        )
+        vec_nalgebra_to_bevy(self.matrix * vec_bevy_to_nalgebra(point))
     }
 
     pub fn mat_in_box_basis(&self, mat: Mat4) -> Mat4 {
-        mat_nalgebra_to_bevy(
-            self.full_inverse * mat_bevy_to_nalgebra(mat)
-        )
+        mat_nalgebra_to_bevy(self.full_inverse * mat_bevy_to_nalgebra(mat))
     }
 
     pub fn mat_in_box_trans_basis(&self, mat: Mat4) -> Mat4 {
-        mat_nalgebra_to_bevy(
-            self.trans_inverse * mat_bevy_to_nalgebra(mat)
-        )
+        mat_nalgebra_to_bevy(self.trans_inverse * mat_bevy_to_nalgebra(mat))
     }
 
     pub fn box_in_box_trans_basis(&self, other: &SdfBoundingBox) -> SdfBoundingBox {
@@ -287,7 +285,10 @@ impl SdfBoundingBox {
     }
 
     pub fn is_zero(&self) -> bool {
-        self.get_transform().scale.as_ref().iter()
+        self.get_transform()
+            .scale
+            .as_ref()
+            .iter()
             .all(|comp| approx_eq!(f32, *comp, 0.0, ulps = 2))
     }
 
@@ -301,9 +302,12 @@ impl SdfBoundingBox {
 
     pub fn max_distance(&self, point: Vec3) -> f32 {
         let nalgebra_point = Point::from_slice(point.extend(1.0).as_ref()).coords;
-        VERT_LIST.iter()
+        VERT_LIST
+            .iter()
             .map(|vert| CmpFloat(((self.matrix * vert) - nalgebra_point).magnitude()))
-            .max().unwrap().0
+            .max()
+            .unwrap()
+            .0
     }
 
     pub fn centroid(&self) -> Vec3 {
@@ -311,7 +315,11 @@ impl SdfBoundingBox {
     }
 
     pub fn contains(&self, point: Vec3) -> bool {
-        self.full_inverse.transform_point(&Point::from_slice(point.as_ref())).coords.amax() <= 1.0
+        self.full_inverse
+            .transform_point(&Point::from_slice(point.as_ref()))
+            .coords
+            .amax()
+            <= 1.0
     }
 
     pub fn get_bbox_block(&self) -> SdfBoundingBoxBlock {

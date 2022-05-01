@@ -87,3 +87,95 @@ impl BuildingSdfNode {
         }
     }
 }
+
+#[cfg(test)]
+pub mod tests {
+    use crate::builder::*;
+    use crate::elements::*;
+    use bevy::prelude::*;
+
+    fn do_sdf_build_flat(prim: Box<dyn SdfElement>, transforms: Vec<Transform>) -> SdfNode {
+        let mut root_union = BuildingSdfNode {
+            slots: Vec::new(),
+            intern: Box::new(SdfUnion { smooth_radius: 0.0 }),
+            transform: Transform::identity(),
+        };
+        for trans in transforms.iter() {
+            root_union =
+                root_union.with(BuildingSdfNode::dyn_primitive(prim.clone()).transform(*trans));
+        }
+        return root_union.finalize();
+    }
+
+    fn do_sdf_build_tall(prim: Box<dyn SdfElement>, transforms: Vec<Transform>) -> SdfNode {
+        let mut cur_root = BuildingSdfNode::dyn_primitive(prim);
+        for trans in transforms.iter() {
+            cur_root = cur_root
+                .transform(*trans)
+                .operation(SdfUnion { smooth_radius: 0.0 });
+        }
+        return cur_root.finalize();
+    }
+
+    fn do_sdf_build_single(prim: Box<dyn SdfElement>, trans: Transform) -> SdfNode {
+        return BuildingSdfNode::dyn_primitive(prim)
+            .transform(trans)
+            .finalize();
+    }
+
+    #[test]
+    fn test_builder_single() {
+        let prim = Box::new(SdfSphere { radius: 1.0 });
+        let root_node = do_sdf_build_single(prim.clone(), Transform::identity());
+        assert!(
+            root_node.intern == prim,
+            "Expected node internal element isn't correct!"
+        );
+    }
+
+    #[test]
+    fn test_builder_flat() {
+        const TEST_NUM_PRIMS: usize = 16;
+        let prim = Box::new(SdfSphere { radius: 1.0 });
+        let root_node = do_sdf_build_flat(
+            prim.clone(),
+            (0..TEST_NUM_PRIMS).map(|_| Transform::identity()).collect(),
+        );
+        assert!(
+            root_node.slots.len() == TEST_NUM_PRIMS,
+            "Number of slots not correct! Expected: {}, Found: {}!",
+            TEST_NUM_PRIMS,
+            root_node.slots.len()
+        );
+        for (i, child_prim) in root_node.slots.iter().enumerate() {
+            assert!(
+                child_prim.intern == prim.clone(),
+                "Primitive at slot {} isn't correct!",
+                i,
+            );
+        }
+    }
+
+    #[test]
+    fn test_builder_tall() {
+        const TEST_HEIGHT: usize = 16;
+        let prim = Box::new(SdfSphere { radius: 1.0 });
+        let mut root_node = do_sdf_build_tall(
+            prim.clone(),
+            (0..TEST_HEIGHT).map(|_| Transform::identity()).collect(),
+        );
+        for i in 0..TEST_HEIGHT {
+            assert!(
+                root_node.slots.len() == 1,
+                "Number of slots for depth {} isn't correct! Expected 1, Found: {}!",
+                i,
+                root_node.slots.len()
+            );
+            root_node = root_node.slots.remove(0);
+        }
+        assert!(
+            root_node.intern == prim,
+            "Expected bottom node internal element isn't correct!"
+        );
+    }
+}

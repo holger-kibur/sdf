@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 pub struct SdfNode {
     pub slots: Vec<SdfNode>,
     pub bbox: SdfBoundingBox,
-    intern: Box<dyn SdfElement>,
+    pub intern: Box<dyn SdfElement>,
 }
 
 impl SdfNode {
@@ -48,7 +48,7 @@ impl SdfNode {
         self.slots.len() == 0
     }
 
-    pub fn downtree(&self, point: Vec3) -> Vec3 {
+    pub fn downtree(&self, point: Vec3) -> [Vec3; 2] {
         self.intern.downtree_transform(point)
     }
 

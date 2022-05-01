@@ -1,7 +1,4 @@
-use super::{
-    component::*,
-    obb::CmpFloat,
-};
+use super::{component::*, obb::CmpFloat};
 use bevy::prelude::*;
 
 #[derive(Clone, Copy)]
@@ -25,11 +22,19 @@ impl LevelStackEntry {
 }
 
 fn min(a: f32, b: f32) -> f32 {
-    if a < b { a } else { b }
+    if a < b {
+        a
+    } else {
+        b
+    }
 }
 
 fn max(a: f32, b: f32) -> f32 {
-    if a > b { a } else { b }
+    if a > b {
+        a
+    } else {
+        b
+    }
 }
 
 fn clamp(a: f32, lmin: f32, lmax: f32) -> f32 {
@@ -46,9 +51,12 @@ fn maxdist(bbox: SdfBoundingBoxBlock, point: Vec4) -> f32 {
         Vec4::new(-1.0, 1.0, -1.0, 1.0),
         Vec4::new(1.0, -1.0, -1.0, 1.0),
         Vec4::new(-1.0, -1.0, -1.0, 1.0),
-    ].iter()
-        .map(|x| CmpFloat(((bbox.matrix * *x) - point).length()))
-        .max().unwrap().0
+    ]
+    .iter()
+    .map(|x| CmpFloat(((bbox.matrix * *x) - point).length()))
+    .max()
+    .unwrap()
+    .0
 }
 
 fn mindist(bbox: SdfBoundingBoxBlock, point: Vec4) -> f32 {
@@ -73,7 +81,11 @@ fn downtree_dispatch(code: u32, op_specific: SdfOpSpecificBlock, point: Vec4) ->
 
         // CAA Clone
         1 => [
-            point - op_specific.vec4s[0] * (point / op_specific.vec4s[0]).round().clamp(op_specific.vec4s[1], op_specific.vec4s[2]),
+            point
+                - op_specific.vec4s[0]
+                    * (point / op_specific.vec4s[0])
+                        .round()
+                        .clamp(op_specific.vec4s[1], op_specific.vec4s[2]),
             Vec4::ZERO,
         ],
 
@@ -81,14 +93,19 @@ fn downtree_dispatch(code: u32, op_specific: SdfOpSpecificBlock, point: Vec4) ->
     }
 }
 
-fn uptree_dispatch(code: u32, op_specific: SdfOpSpecificBlock, left_dist: f32, right_dist: f32) -> f32 {
+fn uptree_dispatch(
+    code: u32,
+    op_specific: SdfOpSpecificBlock,
+    left_dist: f32,
+    right_dist: f32,
+) -> f32 {
     match code {
         // Union
         0 => min(left_dist, right_dist),
 
         // CAA Clone
         1 => right_dist,
-        
+
         other => panic!("Unsupported downtree op code: {}", other),
     }
 }
@@ -109,8 +126,10 @@ pub fn nearest_neighbor(sdf_tree: &SdfTreeBuffer, point: Vec4) -> f32 {
         let dt_block = &sdf_tree.downtree_buffer[dt_index];
         let (dt_point, dt_ut_prune_cmp) = {
             let this_frame = &point_stack[dt_block.level as usize];
-            (this_frame.branch_points[this_frame.fill_idx as usize],
-                this_frame.branch_dists[0])
+            (
+                this_frame.branch_points[this_frame.fill_idx as usize],
+                this_frame.branch_dists[0],
+            )
         };
 
         // Apply union pruning
@@ -118,12 +137,13 @@ pub fn nearest_neighbor(sdf_tree: &SdfTreeBuffer, point: Vec4) -> f32 {
             let this_mindist = mindist(dt_block.bounding_box, dt_point);
             if this_mindist > 0_f32
                 && (this_mindist > dt_ut_prune_cmp
-                    || this_mindist > maxdist(dt_block.other_box, dt_point)) {
+                    || this_mindist > maxdist(dt_block.other_box, dt_point))
+            {
                 dt_index += 1 + dt_block.len as usize;
                 ut_index += 1 + dt_block.len as usize;
                 continue;
             }
-        }   
+        }
 
         // Apply uptree algorithm
         if dt_block.level < last_dt_level {
@@ -147,7 +167,8 @@ pub fn nearest_neighbor(sdf_tree: &SdfTreeBuffer, point: Vec4) -> f32 {
                     ut_block.op_code,
                     ut_block.op_specific,
                     lbranch_dist,
-                    rbranch_dist);
+                    rbranch_dist,
+                );
                 ut_frame.fill_idx += 1;
 
                 // Increment
@@ -162,17 +183,19 @@ pub fn nearest_neighbor(sdf_tree: &SdfTreeBuffer, point: Vec4) -> f32 {
             this_frame.branch_dists[this_frame.fill_idx as usize] = prim_dispatch(
                 dt_block.op_code,
                 dt_block.op_specific,
-                dt_block.bounding_box.trans_inverse * dt_point);
+                dt_block.bounding_box.trans_inverse * dt_point,
+            );
             this_frame.fill_idx += 1;
             ut_index += 1;
-        } 
+        }
         // Non-primitive case
         else {
             let child_frame = &mut point_stack[dt_block.level as usize + 1];
             child_frame.branch_points = downtree_dispatch(
                 dt_block.op_code,
                 dt_block.op_specific,
-                dt_block.bounding_box.trans_inverse * dt_point);
+                dt_block.bounding_box.trans_inverse * dt_point,
+            );
             child_frame.fill_idx = 0;
             child_frame.branch_dists = [f32::INFINITY; 2];
         }
@@ -197,7 +220,8 @@ pub fn nearest_neighbor(sdf_tree: &SdfTreeBuffer, point: Vec4) -> f32 {
             ut_block.op_code,
             ut_block.op_specific,
             lbranch_dist,
-            rbranch_dist);
+            rbranch_dist,
+        );
         ut_frame.fill_idx += 1;
 
         // Increment

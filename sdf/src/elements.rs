@@ -1,11 +1,6 @@
-use std::fmt;
+use super::{component::*, dense_node::*, expanded_node::*, obb::*};
 use bevy::prelude::*;
-use super::{
-    expanded_node::*, 
-    dense_node::*,
-    obb::*,
-    component::*,
-};
+use std::fmt;
 
 pub struct SdfElementInfo {
     pub num_acc_slots: usize,
@@ -63,24 +58,44 @@ impl PartialEq for SdfElementInfo {
 
 pub trait SdfElement: fmt::Debug {
     fn get_info(&self) -> SdfElementInfo;
+
     fn get_bbox(&self, slots_bboxes: &[SdfBoundingBox]) -> SdfBoundingBox;
-    fn downtree_transform(&self, point: Vec3) -> Vec3 {
-        point
+
+    fn downtree_transform(&self, point: Vec3) -> [Vec3; 2] {
+        [point, point]
     }
-    fn uptree_transform(&self, point: Vec3) -> Vec3 {
-        point
+
+    fn uptree_transform(&self, left_dist: f32, right_dist: f32) -> f32 {
+        if (left_dist < right_dist) {
+            left_dist
+        } else {
+            right_dist
+        }
     }
+
     fn distance_to(&self, point: Vec3) -> f32 {
         point.length()
     }
+
     fn clone(&self) -> Box<dyn SdfElement>;
+
     fn get_dt_specific_block(&self) -> SdfOpSpecificBlock {
         SdfOpSpecificBlock::ZERO
     }
+
     fn get_ut_specific_block(&self) -> SdfOpSpecificBlock {
         SdfOpSpecificBlock::ZERO
     }
+
     fn expand(&self, this_node: &SdfNode) -> ExpandedSdfNode;
+}
+
+impl PartialEq for dyn SdfElement {
+    fn eq(&self, other: &Self) -> bool {
+        self.get_info() == other.get_info()
+            && self.get_dt_specific_block() == other.get_dt_specific_block()
+            && self.get_ut_specific_block() == other.get_ut_specific_block()
+    }
 }
 
 #[derive(Debug)]
@@ -99,7 +114,7 @@ impl SdfElement for SdfSphere {
 
     fn clone(&self) -> Box<dyn SdfElement> {
         Box::new(SdfSphere {
-            radius: self.radius
+            radius: self.radius,
         })
     }
 
@@ -139,14 +154,14 @@ impl SdfElement for SdfBoxFrame {
             thickness: self.thickness,
         })
     }
-    
+
     fn get_dt_specific_block(&self) -> SdfOpSpecificBlock {
         let mut ret = SdfOpSpecificBlock::ZERO;
         ret.vec4s[0] = self.dimension.extend(0.0);
         ret.floats[0] = self.thickness;
         ret
     }
-    
+
     fn expand(&self, this_node: &SdfNode) -> ExpandedSdfNode {
         ExpandedSdfNode::primitive(this_node.bbox, self.clone())
     }
@@ -174,17 +189,22 @@ impl SdfElement for SdfUnion {
             1 => this_node.slots.get(0).unwrap().expanded(),
             0 => ExpandedSdfNode::null(),
             _ => {
-                fn recurse(this_intern: &SdfUnion, this_node: &SdfNode, index_vec: Vec<usize>) -> ExpandedSdfNode {
+                fn recurse(
+                    this_intern: &SdfUnion,
+                    this_node: &SdfNode,
+                    index_vec: Vec<usize>,
+                ) -> ExpandedSdfNode {
                     if index_vec.len() == 1 {
                         return this_node.slots[index_vec[0]].expanded();
                     }
 
-                    let bboxes = index_vec.iter()
+                    let bboxes = index_vec
+                        .iter()
                         .map(|i| this_node.slots[*i].bbox)
                         .collect::<Vec<SdfBoundingBox>>();
                     let merged_box = SdfBoundingBox::merge(bboxes.as_slice());
                     let (left_child_inds, right_child_inds) = merged_box.split(bboxes.as_slice());
-                    
+
                     ExpandedSdfNode::operation(
                         [
                             Box::new(recurse(this_intern, this_node, left_child_inds)),
@@ -195,7 +215,7 @@ impl SdfElement for SdfUnion {
                     )
                 }
                 recurse(self, this_node, (0..this_node.slots.len()).collect())
-            },
+            }
         }
     }
 
@@ -213,54 +233,56 @@ impl SdfElement for SdfUnion {
 }
 
 // Continuous, Axis Aligned clone operation
-#[derive(Debug)]
-pub struct SdfCaaClone {
-    pub displacement: Vec3,
-    pub neg_limit: Vec3,
-    pub pos_limit: Vec3,
-}
+// #[derive(Debug)]
+// pub struct SdfCaaClone {
+//     pub displacement: Vec3,
+//     pub neg_limit: Vec3,
+//     pub pos_limit: Vec3,
+// }
 
-impl SdfElement for SdfCaaClone {
-    fn get_info(&self) -> SdfElementInfo {
-        SdfElementInfo::strict_info(1, 0, 1)
-    }
+// impl SdfElement for SdfCaaClone {
+//     fn get_info(&self) -> SdfElementInfo {
+//         SdfElementInfo::strict_info(1, 0, 1)
+//     }
 
-    fn get_bbox(&self, _slots_bboxes: &[SdfBoundingBox]) -> SdfBoundingBox {
-        SdfBoundingBox::from_transform(
-            Transform::from_translation((self.neg_limit + self.pos_limit) / 2_f32 * self.displacement)
-                .with_scale((self.pos_limit - self.neg_limit) * self.displacement)
-        )
-    }
+//     fn get_bbox(&self, _slots_bboxes: &[SdfBoundingBox]) -> SdfBoundingBox {
+//         SdfBoundingBox::from_transform(
+//             Transform::from_translation(
+//                 (self.neg_limit + self.pos_limit) / 2_f32 * self.displacement,
+//             )
+//             .with_scale((self.pos_limit - self.neg_limit) * self.displacement),
+//         )
+//     }
 
-    fn downtree_transform(&self, point: Vec3) -> Vec3 {
-        let lattice_transform = point - (self.displacement / 2.0);
-        Vec3::new(
-            lattice_transform.x % self.displacement.x,
-            lattice_transform.y % self.displacement.y,
-            lattice_transform.z % self.displacement.z,
-        )
-    }
+//     fn downtree_transform(&self, point: Vec3) -> [Vec3; 2] {
+//         let lattice_transform = point - (self.displacement / 2.0);
+//         Vec3::new(
+//             lattice_transform.x % self.displacement.x,
+//             lattice_transform.y % self.displacement.y,
+//             lattice_transform.z % self.displacement.z,
+//         )
+//     }
 
-    fn clone(&self) -> Box<dyn SdfElement> {
-        Box::new(SdfCaaClone {
-            displacement: self.displacement,
-            neg_limit: self.neg_limit,
-            pos_limit: self.pos_limit,
-        })
-    }
+//     fn clone(&self) -> Box<dyn SdfElement> {
+//         Box::new(SdfCaaClone {
+//             displacement: self.displacement,
+//             neg_limit: self.neg_limit,
+//             pos_limit: self.pos_limit,
+//         })
+//     }
 
-    fn get_dt_specific_block(&self) -> SdfOpSpecificBlock {
-        let mut ret = SdfOpSpecificBlock::ZERO;
-        ret.vec4s[0] = self.displacement.extend(0.0);
-        ret.vec4s[1] = self.neg_limit.extend(0.0);
-        ret.vec4s[2] = self.pos_limit.extend(0.0);
-        ret
-    }
+//     fn get_dt_specific_block(&self) -> SdfOpSpecificBlock {
+//         let mut ret = SdfOpSpecificBlock::ZERO;
+//         ret.vec4s[0] = self.displacement.extend(0.0);
+//         ret.vec4s[1] = self.neg_limit.extend(0.0);
+//         ret.vec4s[2] = self.pos_limit.extend(0.0);
+//         ret
+//     }
 
-    fn expand(&self, this_node: &SdfNode) -> ExpandedSdfNode {
-        ExpandedSdfNode::simple_operation(this_node.slots.get(0).unwrap().expanded(), self.clone())
-    }
-}
+//     fn expand(&self, this_node: &SdfNode) -> ExpandedSdfNode {
+//         ExpandedSdfNode::simple_operation(this_node.slots.get(0).unwrap().expanded(), self.clone())
+//     }
+// }
 
 // Surface Sin Wave
 // #[derive(Debug)]
